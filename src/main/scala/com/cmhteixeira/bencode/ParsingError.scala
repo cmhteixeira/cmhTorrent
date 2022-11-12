@@ -9,4 +9,5 @@ object ParsingError {
   case object DataAfterList extends ParsingError
   case object DataAfterDictionary extends ParsingError
   case object BadByteString extends ParsingError
+  case object BadDictionary extends ParsingError
 }

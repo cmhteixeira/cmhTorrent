@@ -4,6 +4,7 @@ import sun.nio.cs.US_ASCII
 import com.cmhteixeira.bencode.Bencode._
 import com.cmhteixeira.bencode.ParsingError.{
   BadByteString,
+  BadDictionary,
   BadInteger,
   DataAfterByteString,
   DataAfterDictionary,
@@ -85,16 +86,16 @@ package object bencode {
   ): Either[ParsingError, (BenDictionary, List[Char])] =
     in match {
       case Nil => Right((BenDictionary(cumulative), Nil))
-      case 'e' :: rest => Right((BenDictionary(cumulative)), rest)
+      case 'e' :: rest => Right(BenDictionary(cumulative), rest)
       case in =>
         decodeByteString(in) match {
           case Left(value) => Left(value)
           case Right((key: BenByteString, remaining)) =>
             bDecode2(remaining) match {
               case Left(value) => Left(value)
-              case Right((bencode, remaining)) => decodeDict(remaining, Map(key -> bencode))
+              case Right((bencode, remainingHere)) => decodeDict(remainingHere, cumulative + (key -> bencode))
             }
-
+          case Right((notByteString, remaining)) => Left(BadDictionary)
         }
     }
 
