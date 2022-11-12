@@ -26,6 +26,7 @@ package object bencode {
 
   private def bDecode2(input: List[Char]): Either[ParsingError, (Bencode, List[Char])] = {
     input match {
+      case 'i' :: '-' :: xs => bDecodeInt(xs, 0).map { case (a, b) => (BenInteger(a.underlying * (-1L)), b) }
       case 'i' :: xs => bDecodeInt(xs, 0)
       case b @ a :: xs if a.isDigit => decodeByteString(b)
       case 'l' :: xs => decodeList(xs, List.empty)

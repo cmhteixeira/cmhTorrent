@@ -5,8 +5,12 @@ import org.scalatest.{FunSuite, Matchers}
 import sun.nio.cs.US_ASCII
 
 class DecodeSpec extends FunSuite with Matchers {
-  test("'i42e' is valid and should be correctly parsed") {
+  test("The number 42 can be encoded as 'i42e'") {
     bDecode("i42e".getBytes(new US_ASCII())) shouldBe Right(BenInteger(42L))
+  }
+
+  test("The negative of 42 can be encoded as 'i-42e'") {
+    bDecode("i-42e".getBytes(new US_ASCII())) shouldBe Right(BenInteger(-42L))
   }
 
   test("The string 'spam' can be encoded as '4:spam'") {
