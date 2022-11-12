@@ -57,4 +57,24 @@ class DecodeSpec extends FunSuite with Matchers {
       case Right(a) => fail(s"Incorrectly decoded. Actual: ${a.toString}")
     }
   }
+
+  test("'d4:spaml1:a1:bee' should parse to a dictionary of key 'spam' and value a list with elements 'a' and 'b'") {
+    bDecode("d4:spaml1:a1:bee".getBytes(new US_ASCII())) match {
+      case Left(value) => fail(value)
+      case Right(BenDictionary(underlying)) =>
+        val sizeDict = underlying.size
+        if (sizeDict != 1) fail(s"Dictionary should contain 1 key ('spam') only. Actual: $underlying")
+        else {
+          val (key, value) = underlying.head
+          new String(key.underlying, new US_ASCII) shouldBe "spam"
+          value match {
+            case BenList(BenByteString(a) :: BenByteString(b) :: Nil) =>
+              new String(a, new US_ASCII) shouldBe "a"
+              new String(b, new US_ASCII) shouldBe "b"
+            case _ => fail(s"Incorrectly decoded value of the map element. Expected a list with 2 elements. Actual: ${value.toString}")
+          }
+        }
+      case Right(value) => fail(s"Incorrectly decoded. Actual: ${value.toString}")
+    }
+  }
 }

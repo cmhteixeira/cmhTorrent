@@ -2,7 +2,7 @@ package com.cmhteixeira
 
 import sun.nio.cs.US_ASCII
 import com.cmhteixeira.bencode.Bencode._
-import com.cmhteixeira.bencode.ParsingError.{
+import com.cmhteixeira.bencode.ParsingFailure.{
   BadByteString,
   BadDictionary,
   BadInteger,
@@ -16,7 +16,7 @@ import scala.annotation.tailrec
 
 package object bencode {
 
-  def bDecode(input: Array[Byte]): Either[ParsingError, Bencode] =
+  def bDecode(input: Array[Byte]): Either[ParsingFailure, Bencode] =
     bDecode2(input.map(_.toChar).toList).flatMap {
       case (bencode, Nil) => Right(bencode)
       case (_: BenInteger, remaining) => Left(DataAfterInteger)
@@ -25,7 +25,7 @@ package object bencode {
       case (_: BenDictionary, remaining) => Left(DataAfterDictionary)
     }
 
-  private def bDecode2(input: List[Char]): Either[ParsingError, (Bencode, List[Char])] = {
+  private def bDecode2(input: List[Char]): Either[ParsingFailure, (Bencode, List[Char])] = {
     input match {
       case 'i' :: '-' :: xs => bDecodeInt(xs, 0).map { case (a, b) => (BenInteger(a.underlying * (-1L)), b) }
       case 'i' :: xs => bDecodeInt(xs, 0)
@@ -36,7 +36,7 @@ package object bencode {
   }
 
   @tailrec
-  private def bDecodeInt(in: List[Char], cumulative: Long): Either[ParsingError, (BenInteger, List[Char])] =
+  private def bDecodeInt(in: List[Char], cumulative: Long): Either[ParsingFailure, (BenInteger, List[Char])] =
     in match {
       case head :: tl if head.isDigit => bDecodeInt(tl, cumulative * 10 + head.asDigit)
       case head :: tl if head == 'e' => Right((BenInteger(cumulative), tl))
@@ -45,10 +45,10 @@ package object bencode {
 
   private def decodeByteString(
       in: List[Char]
-  ): Either[ParsingError, (BenByteString, List[Char])] = {
+  ): Either[ParsingFailure, (BenByteString, List[Char])] = {
 
     @tailrec
-    def readPart1(in: List[Char], bytesToRead: Long): Either[ParsingError, (BenByteString, List[Char])] =
+    def readPart1(in: List[Char], bytesToRead: Long): Either[ParsingFailure, (BenByteString, List[Char])] =
       in match {
         case a :: xs if a.isDigit => readPart1(xs, bytesToRead * 10 + a.asDigit)
         case ':' :: rest =>
@@ -71,7 +71,7 @@ package object bencode {
   }
 
   @tailrec
-  private def decodeList(in: List[Char], cumulative: List[Bencode]): Either[ParsingError, (BenList, List[Char])] = {
+  private def decodeList(in: List[Char], cumulative: List[Bencode]): Either[ParsingFailure, (BenList, List[Char])] = {
     bDecode2(in) match {
       case Left(l) => Left(l)
       case Right((bencode, 'e' :: xs)) => Right(BenList(cumulative :+ bencode), xs)
@@ -83,7 +83,7 @@ package object bencode {
   private def decodeDict(
       in: List[Char],
       cumulative: Map[BenByteString, Bencode]
-  ): Either[ParsingError, (BenDictionary, List[Char])] =
+  ): Either[ParsingFailure, (BenDictionary, List[Char])] =
     in match {
       case Nil => Right((BenDictionary(cumulative), Nil))
       case 'e' :: rest => Right(BenDictionary(cumulative), rest)

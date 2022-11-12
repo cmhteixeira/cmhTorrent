@@ -34,6 +34,17 @@
       <artifactId>bencode</artifactId>
       <version>1.4</version>
     </dependency>
+    <dependency>
+      <groupId>io.circe</groupId>
+      <artifactId>circe-core_2.12</artifactId>
+      <version>0.14.1</version>
+    </dependency>
+    <dependency>
+      <groupId>io.circe</groupId>
+      <artifactId>circe-parser_2.12</artifactId>
+      <version>0.14.1</version>
+    </dependency>
+
 
     <!-- Test -->
     <dependency>
