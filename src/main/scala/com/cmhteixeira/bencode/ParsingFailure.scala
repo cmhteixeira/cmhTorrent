@@ -6,6 +6,10 @@ sealed trait DecodingFailure extends Error
 
 object DecodingFailure {
   case object NotABdictionary extends DecodingFailure
+  case object NotABList extends DecodingFailure
+  case class DictionaryKeyMissing(keyName: String) extends DecodingFailure
+  case class DifferentTypeExpected(expeted: String, actual: String) extends DecodingFailure
+  case class GenericDecodingFailure(msg: String) extends DecodingFailure
 }
 
 sealed trait ParsingFailure extends Error

@@ -16,44 +16,44 @@ import scala.annotation.tailrec
 
 package object bencode {
 
-  def bDecode(input: Array[Byte]): Either[ParsingFailure, Bencode] =
-    bDecode2(input.map(_.toChar).toList).flatMap {
+  def bParse(input: Array[Byte]): Either[ParsingFailure, Bencode] =
+    bParse(input.map(_.toChar).toList).flatMap {
       case (bencode, Nil) => Right(bencode)
-      case (_: BenInteger, remaining) => Left(DataAfterInteger)
-      case (_: BenList, remaining) => Left(DataAfterList)
-      case (_: BenByteString, remaining) => Left(DataAfterByteString)
-      case (_: BenDictionary, remaining) => Left(DataAfterDictionary)
+      case (_: BInteger, remaining) => Left(DataAfterInteger)
+      case (_: BList, remaining) => Left(DataAfterList)
+      case (_: BByteString, remaining) => Left(DataAfterByteString)
+      case (_: BDictionary, remaining) => Left(DataAfterDictionary)
     }
 
-  private def bDecode2(input: List[Char]): Either[ParsingFailure, (Bencode, List[Char])] = {
+  private def bParse(input: List[Char]): Either[ParsingFailure, (Bencode, List[Char])] = {
     input match {
-      case 'i' :: '-' :: xs => bDecodeInt(xs, 0).map { case (a, b) => (BenInteger(a.underlying * (-1L)), b) }
-      case 'i' :: xs => bDecodeInt(xs, 0)
-      case b @ a :: xs if a.isDigit => decodeByteString(b)
-      case 'l' :: xs => decodeList(xs, List.empty)
-      case 'd' :: xs => decodeDict(xs, Map.empty)
+      case 'i' :: '-' :: xs => bParseInt(xs, 0).map { case (a, b) => (BInteger(a.underlying * (-1L)), b) }
+      case 'i' :: xs => bParseInt(xs, 0)
+      case b @ a :: xs if a.isDigit => parseByteString(b)
+      case 'l' :: xs => parseList(xs, List.empty)
+      case 'd' :: xs => parseDict(xs, Map.empty)
     }
   }
 
   @tailrec
-  private def bDecodeInt(in: List[Char], cumulative: Long): Either[ParsingFailure, (BenInteger, List[Char])] =
+  private def bParseInt(in: List[Char], cumulative: Long): Either[ParsingFailure, (BInteger, List[Char])] =
     in match {
-      case head :: tl if head.isDigit => bDecodeInt(tl, cumulative * 10 + head.asDigit)
-      case head :: tl if head == 'e' => Right((BenInteger(cumulative), tl))
+      case head :: tl if head.isDigit => bParseInt(tl, cumulative * 10 + head.asDigit)
+      case head :: tl if head == 'e' => Right((BInteger(cumulative), tl))
       case _ => Left(BadInteger)
     }
 
-  private def decodeByteString(
+  private def parseByteString(
       in: List[Char]
-  ): Either[ParsingFailure, (BenByteString, List[Char])] = {
+  ): Either[ParsingFailure, (BByteString, List[Char])] = {
 
     @tailrec
-    def readPart1(in: List[Char], bytesToRead: Long): Either[ParsingFailure, (BenByteString, List[Char])] =
+    def readPart1(in: List[Char], bytesToRead: Long): Either[ParsingFailure, (BByteString, List[Char])] =
       in match {
         case a :: xs if a.isDigit => readPart1(xs, bytesToRead * 10 + a.asDigit)
         case ':' :: rest =>
           val (a1, a2) = readPart2(rest, bytesToRead, List())
-          Right(BenByteString(a1.toArray), a2)
+          Right(BByteString(a1.toArray), a2)
         case _ => Left(BadByteString)
       }
 
@@ -71,29 +71,29 @@ package object bencode {
   }
 
   @tailrec
-  private def decodeList(in: List[Char], cumulative: List[Bencode]): Either[ParsingFailure, (BenList, List[Char])] = {
-    bDecode2(in) match {
+  private def parseList(in: List[Char], cumulative: List[Bencode]): Either[ParsingFailure, (BList, List[Char])] = {
+    bParse(in) match {
       case Left(l) => Left(l)
-      case Right((bencode, 'e' :: xs)) => Right(BenList(cumulative :+ bencode), xs)
-      case Right((bencode, xs)) => decodeList(xs, cumulative :+ bencode)
+      case Right((bencode, 'e' :: xs)) => Right(BList(cumulative :+ bencode), xs)
+      case Right((bencode, xs)) => parseList(xs, cumulative :+ bencode)
     }
   }
 
   @tailrec
-  private def decodeDict(
+  private def parseDict(
       in: List[Char],
-      cumulative: Map[BenByteString, Bencode]
-  ): Either[ParsingFailure, (BenDictionary, List[Char])] =
+      cumulative: Map[BByteString, Bencode]
+  ): Either[ParsingFailure, (BDictionary, List[Char])] =
     in match {
-      case Nil => Right((BenDictionary(cumulative), Nil))
-      case 'e' :: rest => Right(BenDictionary(cumulative), rest)
+      case Nil => Right((BDictionary(cumulative), Nil))
+      case 'e' :: rest => Right(BDictionary(cumulative), rest)
       case in =>
-        decodeByteString(in) match {
+        parseByteString(in) match {
           case Left(value) => Left(value)
-          case Right((key: BenByteString, remaining)) =>
-            bDecode2(remaining) match {
+          case Right((key: BByteString, remaining)) =>
+            bParse(remaining) match {
               case Left(value) => Left(value)
-              case Right((bencode, remainingHere)) => decodeDict(remainingHere, cumulative + (key -> bencode))
+              case Right((bencode, remainingHere)) => parseDict(remainingHere, cumulative + (key -> bencode))
             }
           case Right((notByteString, remaining)) => Left(BadDictionary)
         }
@@ -101,12 +101,12 @@ package object bencode {
 
   def bEncode(b: Bencode): Array[Byte] =
     b match {
-      case BenInteger(underlying) => s"i${underlying}e".getBytes(new US_ASCII())
-      case BenByteString(underlying) => s"${underlying.length}:".getBytes(new US_ASCII) ++ underlying
-      case BenList(underlying) =>
+      case BInteger(underlying) => s"i${underlying}e".getBytes(new US_ASCII())
+      case BByteString(underlying) => s"${underlying.length}:".getBytes(new US_ASCII) ++ underlying
+      case BList(underlying) =>
         val contents = underlying.map(bEncode).foldLeft(Array.emptyByteArray)(_ ++ _)
         "l".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
-      case BenDictionary(underlying) =>
+      case BDictionary(underlying) =>
         // TODO: How to order dictionary keys lexicographically if we don't have the encoding? For now encoding is un-ordered.
         val contents = underlying.foldLeft(Array.emptyByteArray) {
           case (a, (b1, b2)) => a ++ bEncode(b1) ++ bEncode(b2)

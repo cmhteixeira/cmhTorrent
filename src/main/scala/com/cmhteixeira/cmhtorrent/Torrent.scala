@@ -1,6 +1,19 @@
 package com.cmhteixeira.cmhtorrent
 
+import cats.Show
+import cats.implicits.{
+  catsStdInstancesForEither,
+  catsSyntaxTuple2Semigroupal,
+  catsSyntaxTuple3Semigroupal,
+  toTraverseOps
+}
+import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
+import com.cmhteixeira.bencode.DecodingFailure.{DictionaryKeyMissing, DifferentTypeExpected, GenericDecodingFailure}
 import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure}
+import io.circe.{Json, JsonObject}
+import sun.nio.cs.UTF_8
+
+import java.sql.Date
 
 case class Torrent(
     info: Info,
@@ -19,28 +32,172 @@ case class SingleFile(length: Long, md5sum: Option[String], name: String, pieceL
 case class MultiFile(files: List[File], md5sum: Option[String], name: String, pieceLength: Long, pieces: String)
     extends Info
 
-case class File(length: Long, path: String)
+case class File(length: Long, path: List[String])
 
-object Torrent {
+object File {
+  private val lengthField = "length"
+  private val pathField = "path"
 
-  implicit val decoder: Decoder[Torrent] = new Decoder[Torrent] {
+  implicit val decoder: Decoder[File] = new Decoder[File] {
 
     override def apply(
         t: Bencode
-    ): Either[DecodingFailure, Torrent] =
+    ): Either[DecodingFailure, File] =
       t match {
-        case Bencode.BenDictionary(underlying) => ???
+        case dict: Bencode.BDictionary =>
+          val length = for {
+            value <- dict(lengthField).toRight(DictionaryKeyMissing(lengthField))
+            str <- value.asNumber.toRight(GenericDecodingFailure("notString"))
+          } yield str.underlying
+
+          val path = for {
+            value <- dict(pathField).toRight(DictionaryKeyMissing(pathField))
+            list <- value.asList.toRight(GenericDecodingFailure("NotList"))
+            listStr <- list.traverse(_.asString.toRight(GenericDecodingFailure("asdsa")))
+          } yield listStr
+
+          (length, path).mapN { case (l, p) => File(l, p) }
+
         case _ => Left(DecodingFailure.NotABdictionary)
       }
   }
 }
 
-object Info {
+object Torrent {
+  private val announceField = "announce"
+  private val infoField = "info"
+  private val announceListField = "announce-list"
+  private val commentField = "comment"
+  private val createdByField = "created by"
+  private val creationDateField = "creation date"
 
-  implicit val decoder: Decoder[Info] = new Decoder[Info] {
+  implicit val decoder: Decoder[Torrent] = new Decoder[Torrent] {
 
     override def apply(
         t: Bencode
-    ): Either[DecodingFailure, Info] = ???
+    ): Either[DecodingFailure, Torrent] = {
+
+      t match {
+        case dict: Bencode.BDictionary =>
+          val trackerUrl =
+            for {
+              value <- dict(announceField).toRight(DictionaryKeyMissing(announceField))
+              str <- value.asString.toRight(GenericDecodingFailure("asd"))
+            } yield str
+
+          val info = dict(infoField).map(_.as[Info]).getOrElse(Left(DictionaryKeyMissing(infoField)))
+
+          val announceList = dict(announceListField).flatMap(_.asString)
+
+          val comment = dict(commentField).flatMap(_.asString)
+
+          val createdBy = dict(createdByField).flatMap(_.asString)
+
+          val creationDate = dict(creationDateField).flatMap(_.asLong)
+
+          (trackerUrl, info).mapN {
+            case (announce, info) => Torrent(info, announce, announceList, creationDate, comment, createdBy)
+          }
+        case _ => Left(DecodingFailure.NotABdictionary)
+      }
+    }
+  }
+
+  implicit val show: Show[Torrent] = new Show[Torrent] {
+
+    def showSingle(t: SingleFile, tab: String): String =
+      s"""Single-File
+         |  name: ${t.name}
+         |  length: ${t.length}
+         |  md5sum: ${t.md5sum.getOrElse("NA")}
+         |  pieceLength: ${t.pieceLength}
+         |  pieces: ${t.pieces.take(15)} [truncated]""".stripMargin
+
+    def showMulti(t: MultiFile, tab: String): String =
+      s"""Multi-File
+         |  dirName: ${t.name}
+         |  files: ${t.files
+        .map {
+          case File(size, dirStructure) =>
+            s"""
+            |${tab}File: ${dirStructure.mkString("/")}
+            |${tab}Size: $size""".stripMargin
+        }
+        .mkString("")}
+         |  md5sum: ${t.md5sum.getOrElse("NA")}
+         |  pieceLength: ${t.pieceLength}
+         |  pieces: ${t.pieces.take(15)} [truncated]""".stripMargin
+
+    override def show(t: Torrent): String = {
+
+      val rest = t.info match {
+        case single: SingleFile => showSingle(single, "")
+        case multi: MultiFile => showMulti(multi, "    ")
+      }
+
+      s"""
+        |Torrent
+        |announce: ${t.announce}
+        |info
+        |$rest
+        |announceList: ${t.announceList.getOrElse("NA")}
+        |creationDate: ${t.creationDate.map(a => new Date(a * 1000).toLocalDate.toString).getOrElse("NA")}
+        |comment: ${t.comment.getOrElse("NA")}
+        |createdBy: ${t.createdBy.getOrElse("NA")}
+        |""".stripMargin
+    }
+  }
+}
+
+object Info {
+  private val lengthField = "length"
+  private val filesField = "files"
+  private val nameField = "name"
+  private val pieceLengthField = "piece length"
+  private val piecesField = "pieces"
+
+  implicit val decoder: Decoder[Info] = new Decoder[Info] {
+
+    private def commonFields(dict: BDictionary): Either[DecodingFailure, (String, Long, String)] = {
+      (
+        for {
+          value <- dict(nameField).toRight(DictionaryKeyMissing(nameField))
+          str <- value.asString.toRight(GenericDecodingFailure("asd"))
+        } yield str,
+        for {
+          value <- dict(pieceLengthField).toRight(DictionaryKeyMissing(pieceLengthField))
+          benInt <- value.asNumber.toRight(GenericDecodingFailure("erer")).map(_.underlying)
+        } yield benInt, {
+          for {
+            value <- dict(piecesField).toRight(DictionaryKeyMissing(piecesField))
+            str <- value.asString.toRight(GenericDecodingFailure("asd"))
+          } yield str
+        }
+      ).mapN { case (name, pieceLength, pieces) => (name, pieceLength, pieces) }
+    }
+
+    override def apply(
+        t: Bencode
+    ): Either[DecodingFailure, Info] =
+      t match {
+        case dict: Bencode.BDictionary =>
+          (dict(lengthField), dict(filesField)) match {
+            case (None, None) => Left(DictionaryKeyMissing(lengthField))
+            case (Some(single), Some(multiple)) =>
+              Left(
+                GenericDecodingFailure(
+                  s"Both fields '$lengthField' and '$filesField' present when only one should exist."
+                )
+              )
+            case (Some(BInteger(length)), None) =>
+              commonFields(dict).map { case (a, b, c) => SingleFile(length, None, a, b, c) }
+            case (Some(a), None) => Left(DifferentTypeExpected("BInteger", a.getClass.toString))
+            case (None, Some(bEncode)) =>
+              (bEncode.as[List[File]], commonFields(dict)).mapN {
+                case (files, (a, b, c)) => MultiFile(files, None, a, b, c)
+              }
+          }
+        case _ => Left(DecodingFailure.NotABdictionary)
+      }
   }
 }
