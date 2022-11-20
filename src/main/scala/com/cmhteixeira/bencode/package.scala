@@ -14,9 +14,11 @@ import com.cmhteixeira.bencode.ParsingFailure.{
 
 import scala.annotation.tailrec
 
-package object bencode {
+package object bencode extends Parser {
 
-  def bParse(input: Array[Byte]): Either[ParsingFailure, Bencode] =
+  override def parse(
+      input: Array[Byte]
+  ): Either[ParsingFailure, Bencode] =
     bParse(input.map(_.toChar).toList).flatMap {
       case (bencode, Nil) => Right(bencode)
       case (_: BInteger, remaining) => Left(DataAfterInteger)
@@ -113,4 +115,5 @@ package object bencode {
         }
         "d".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
     }
+
 }
