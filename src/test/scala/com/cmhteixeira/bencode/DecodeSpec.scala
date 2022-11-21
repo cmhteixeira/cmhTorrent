@@ -10,15 +10,15 @@ import sun.nio.cs.US_ASCII
 
 class DecodeSpec extends FunSuite with Matchers {
   test("The number 42 can be encoded as 'i42e'") {
-    bParse("i42e".getBytes(new US_ASCII())) shouldBe Right(BInteger(42L))
+    parse("i42e".getBytes(new US_ASCII())) shouldBe Right(BInteger(42L))
   }
 
   test("The negative of 42 can be encoded as 'i-42e'") {
-    bParse("i-42e".getBytes(new US_ASCII())) shouldBe Right(BInteger(-42L))
+    parse("i-42e".getBytes(new US_ASCII())) shouldBe Right(BInteger(-42L))
   }
 
   test("The string 'spam' can be encoded as '4:spam'") {
-    bParse("4:spam".getBytes(new US_ASCII())) match {
+    parse("4:spam".getBytes(new US_ASCII())) match {
       case Left(value) => fail(value.toString)
       case Right(BByteString(theBytes)) => new String(theBytes, new US_ASCII()) shouldBe "spam"
       case Right(a) => fail(s"Decoded value should be a ${classOf[BByteString]}. Actual: ${a.toString}")
@@ -26,7 +26,7 @@ class DecodeSpec extends FunSuite with Matchers {
   }
 
   test("The list consisting of the string 'spam' and the number 42 can be encoded as 'l4:spami42ee'") {
-    bParse("l4:spami42ee".getBytes(new US_ASCII)) match {
+    parse("l4:spami42ee".getBytes(new US_ASCII)) match {
       case Left(value) => fail(value.toString)
       case Right(BList(BByteString(byteString) :: BInteger(theNumber) :: Nil)) =>
         theNumber shouldBe 42L
@@ -38,7 +38,7 @@ class DecodeSpec extends FunSuite with Matchers {
   test(
     "A dictionary that associates the values 42 and 'spam' with the keys 'foo' and 'bar' respectively can be encoded as 'd3:bar4:spam3:fooi42ee'"
   ) {
-    bParse("d3:bar4:spam3:fooi42ee".getBytes(new US_ASCII)) match {
+    parse("d3:bar4:spam3:fooi42ee".getBytes(new US_ASCII)) match {
       case Left(value) => fail(value.toString)
       case Right(BDictionary(underlying)) =>
         val mapSize = underlying.size
@@ -63,7 +63,7 @@ class DecodeSpec extends FunSuite with Matchers {
   }
 
   test("'d4:spaml1:a1:bee' should parse to a dictionary of key 'spam' and value a list with elements 'a' and 'b'") {
-    bParse("d4:spaml1:a1:bee".getBytes(new US_ASCII())) match {
+    parse("d4:spaml1:a1:bee".getBytes(new US_ASCII())) match {
       case Left(value) => fail(value)
       case Right(BDictionary(underlying)) =>
         val sizeDict = underlying.size
@@ -88,7 +88,7 @@ class DecodeSpec extends FunSuite with Matchers {
   test("FOOBAR") {
     val r = getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes()
     val decoder = implicitly[Decoder[Torrent]]
-    bParse(r) match {
+    parse(r) match {
       case Left(value) => println(value)
       case Right(value) =>
         decoder(value) match {
@@ -103,7 +103,7 @@ class DecodeSpec extends FunSuite with Matchers {
   test("This should work") {
     val r = getClass.getResourceAsStream("/Black.Adam.(2022).[720p].[WEBRip].[YTS].torrent").readAllBytes()
     val decoder = implicitly[Decoder[Torrent]]
-    bParse(r) match {
+    parse(r) match {
       case Left(value) => println(value)
       case Right(value) =>
         decoder(value) match {

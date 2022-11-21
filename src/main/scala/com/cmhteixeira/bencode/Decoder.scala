@@ -20,4 +20,11 @@ object Decoder {
           case _ => Left(NotABList)
         }
     }
+
+  implicit val bencodeDecoder: Decoder[Bencode] = new Decoder[Bencode] {
+
+    override def apply(
+        t: Bencode
+    ): Either[DecodingFailure, Bencode] = Right(t)
+  }
 }

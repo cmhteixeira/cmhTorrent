@@ -9,7 +9,7 @@ import cats.implicits.{
 }
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
 import com.cmhteixeira.bencode.DecodingFailure.{DictionaryKeyMissing, DifferentTypeExpected, GenericDecodingFailure}
-import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure}
+import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure, Encoder}
 import io.circe.{Json, JsonObject}
 import sun.nio.cs.UTF_8
 
@@ -18,7 +18,7 @@ import java.sql.Date
 case class Torrent(
     info: Info,
     announce: String,
-    announceList: Option[String],
+    announceList: Option[List[List[String]]],
     creationDate: Option[Long],
     comment: Option[String],
     createdBy: Option[String]
@@ -61,6 +61,17 @@ object File {
         case _ => Left(DecodingFailure.NotABdictionary)
       }
   }
+
+  implicit val encoder: Encoder[File] = new Encoder[File] {
+
+    override def apply(t: File): Bencode =
+      BDictionary(
+        Map(
+          Bencode.fromString(lengthField) -> Bencode.fromLong(t.length),
+          Bencode.fromString(pathField) -> BList(t.path.map(Bencode.fromString))
+        )
+      )
+  }
 }
 
 object Torrent {
@@ -87,7 +98,12 @@ object Torrent {
 
           val info = dict(infoField).map(_.as[Info]).getOrElse(Left(DictionaryKeyMissing(infoField)))
 
-          val announceList = dict(announceListField).flatMap(_.asString)
+          val announceList =
+            for {
+              value <- dict(announceListField)
+              asListOfLists <- value.as[List[List[Bencode]]].toOption
+              asListOfListOfStrings <- asListOfLists.traverse(_.traverse(_.asString))
+            } yield asListOfListOfStrings
 
           val comment = dict(commentField).flatMap(_.asString)
 
@@ -100,6 +116,35 @@ object Torrent {
           }
         case _ => Left(DecodingFailure.NotABdictionary)
       }
+    }
+  }
+
+  implicit val encoder: Encoder[Torrent] = new Encoder[Torrent] {
+
+    override def apply(t: Torrent): Bencode = {
+      val Torrent(info, announce, announceList, creationDate, comment, createdBy) = t
+
+      val mainFields = BDictionary(
+        Map(
+          Bencode.fromString(announceField) -> Bencode.fromString(announce),
+          Bencode.fromString(infoField) -> Info.encoder(info)
+        )
+      )
+
+      val announceDict =
+        announceList.map(j => BList(j.map(i => BList(i.map(Bencode.fromString)))))
+
+      val commentDict =
+        comment.map(a => BDictionary(Map(Bencode.fromString(commentField) -> Bencode.fromString(a))))
+
+      val createdByDict =
+        createdBy.map(a => BDictionary(Map(Bencode.fromString(createdByField) -> Bencode.fromString(a))))
+
+      val creationDateDict =
+        creationDate.map(a => BDictionary(Map(Bencode.fromString(creationDateField) -> Bencode.fromLong(a))))
+
+      List(announceDict, commentDict, createdByDict, creationDateDict).flatten
+        .foldLeft[Bencode](mainFields) { case (a, b) => a merge b }
     }
   }
 
@@ -140,7 +185,7 @@ object Torrent {
         |announce: ${t.announce}
         |info
         |$rest
-        |announceList: ${t.announceList.getOrElse("NA")}
+        |announceList:\n    ${t.announceList.getOrElse(List.empty).map(_.mkString(", ")).mkString("\n    ")}
         |creationDate: ${t.creationDate.map(a => new Date(a * 1000).toLocalDate.toString).getOrElse("NA")}
         |comment: ${t.comment.getOrElse("NA")}
         |createdBy: ${t.createdBy.getOrElse("NA")}
@@ -198,6 +243,27 @@ object Info {
               }
           }
         case _ => Left(DecodingFailure.NotABdictionary)
+      }
+  }
+
+  implicit val encoder: Encoder[Info] = new Encoder[Info] {
+
+    private def commonFields(name: String, pieceLength: Long, pieces: String, md5sum: Option[String]): BDictionary =
+      Bencode.dictStringKeys(
+        (nameField, Bencode.fromString(name)),
+        (pieceLengthField, Bencode.fromLong(pieceLength)),
+        (piecesField, Bencode.fromString(pieces))
+      )
+
+    override def apply(t: Info): Bencode =
+      t match {
+        case SingleFile(length, md5sum, name, pieceLength, pieces) =>
+          BDictionary(Map(Bencode.fromString(lengthField) -> Bencode.fromLong(length)))
+            .merge(commonFields(name, pieceLength, pieces, md5sum))
+        case MultiFile(files, md5sum, name, pieceLength, pieces) =>
+          Bencode
+            .dictStringKeys((filesField, BList(files.map(file => File.encoder(file)))))
+            .merge(commonFields(name, pieceLength, pieces, md5sum))
       }
   }
 }

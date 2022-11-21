@@ -14,7 +14,7 @@ import com.cmhteixeira.bencode.ParsingFailure.{
 
 import scala.annotation.tailrec
 
-package object bencode extends Parser {
+package object bencode extends Parser with Serializer {
 
   override def parse(
       input: Array[Byte]
@@ -101,19 +101,18 @@ package object bencode extends Parser {
         }
     }
 
-  def bEncode(b: Bencode): Array[Byte] =
+  def serialize(b: Bencode): Array[Byte] =
     b match {
       case BInteger(underlying) => s"i${underlying}e".getBytes(new US_ASCII())
       case BByteString(underlying) => s"${underlying.length}:".getBytes(new US_ASCII) ++ underlying
       case BList(underlying) =>
-        val contents = underlying.map(bEncode).foldLeft(Array.emptyByteArray)(_ ++ _)
+        val contents = underlying.map(serialize).foldLeft(Array.emptyByteArray)(_ ++ _)
         "l".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
       case BDictionary(underlying) =>
         // TODO: How to order dictionary keys lexicographically if we don't have the encoding? For now encoding is un-ordered.
         val contents = underlying.foldLeft(Array.emptyByteArray) {
-          case (a, (b1, b2)) => a ++ bEncode(b1) ++ bEncode(b2)
+          case (a, (b1, b2)) => a ++ serialize(b1) ++ serialize(b2)
         }
         "d".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
     }
-
 }

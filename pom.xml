@@ -44,6 +44,16 @@
       <artifactId>circe-parser_2.12</artifactId>
       <version>0.14.1</version>
     </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.1.0</version>
+    </dependency>
+    <dependency> <!--TODO: Only to print hex-string representation of sha-1 output. Consider another way-->
+      <groupId>commons-codec</groupId>
+      <artifactId>commons-codec</artifactId>
+      <version>1.15</version>
+    </dependency>
 
 
     <!-- Test -->
