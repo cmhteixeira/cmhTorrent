@@ -8,12 +8,21 @@ import cats.implicits.{
   toTraverseOps
 }
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
-import com.cmhteixeira.bencode.DecodingFailure.{DictionaryKeyMissing, DifferentTypeExpected, GenericDecodingFailure}
+import com.cmhteixeira.bencode.DecodingFailure.{
+  DictionaryKeyMissing,
+  DifferentTypeExpected,
+  GenericDecodingFailure,
+  NotABdictionary
+}
 import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure, Encoder}
+import com.cmhteixeira.cmhtorrent.Info.SHA1Hash
+import com.sun.tools.javac.util.ArrayUtils
 import io.circe.{Json, JsonObject}
+import org.apache.commons.codec.binary.Hex
 import sun.nio.cs.UTF_8
 
 import java.sql.Date
+import java.util
 
 case class Torrent(
     info: Info,
@@ -26,9 +35,9 @@ case class Torrent(
 
 sealed trait Info
 
-case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: String) extends Info
+case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: List[SHA1Hash]) extends Info
 
-case class MultiFile(files: List[File], name: String, pieceLength: Long, pieces: String) extends Info
+case class MultiFile(files: List[File], name: String, pieceLength: Long, pieces: List[SHA1Hash]) extends Info
 
 case class File(length: Long, path: List[String])
 
@@ -167,7 +176,9 @@ object Torrent {
         }
         .mkString("")}
          |  pieceLength: ${t.pieceLength}
-         |  pieces: ${t.pieces.take(15)} [truncated]""".stripMargin
+         |  pieces: 
+         |    [${t.pieces.take(20).mkString(", ")}]${if (t.pieces.size <= 20) ""
+      else s"[showing ${20}/${t.pieces.size}]"}""".stripMargin
 
     override def show(t: Torrent): String = {
 
@@ -191,6 +202,7 @@ object Torrent {
 }
 
 object Info {
+  type SHA1Hash = String
   private val lengthField = "length"
   private val filesField = "files"
   private val nameField = "name"
@@ -199,7 +211,7 @@ object Info {
 
   implicit val decoder: Decoder[Info] = new Decoder[Info] {
 
-    private def commonFields(dict: BDictionary): Either[DecodingFailure, (String, Long, String)] = {
+    private def commonFields(dict: BDictionary): Either[DecodingFailure, (String, Long, List[String])] = {
       (
         for {
           value <- dict(nameField).toRight(DictionaryKeyMissing(nameField))
@@ -211,8 +223,27 @@ object Info {
         } yield benInt, {
           for {
             value <- dict(piecesField).toRight(DictionaryKeyMissing(piecesField))
-            str <- value.asString.toRight(GenericDecodingFailure("asd"))
-          } yield str
+            str <- value match {
+              case BByteString(underlying) => Right(underlying)
+              case a => Left(DifferentTypeExpected("BByteString", a.getClass.getName))
+            }
+            hexHashes <-
+              if (str.length % 20 != 0)
+                Left(GenericDecodingFailure("Pieces field does not contain multiple of 20 bytes."))
+              else {
+                val numberPieces = str.length / 20
+                Right(
+                  (0 until numberPieces)
+                    .map(i => (i * 20, i * 20 + 20))
+                    .map {
+                      case (startInclusive, endExclusive) => util.Arrays.copyOfRange(str, startInclusive, endExclusive)
+                    }
+                    .map(Hex.encodeHexString)
+                    .toList
+                )
+
+              }
+          } yield hexHashes
         }
       ).mapN { case (name, pieceLength, pieces) => (name, pieceLength, pieces) }
     }
@@ -231,7 +262,10 @@ object Info {
                 )
               )
             case (Some(BInteger(length)), None) =>
-              commonFields(dict).map { case (a, b, c) => SingleFile(length, a, b, c) }
+              commonFields(dict).map {
+                case (name, pieceLen, pieces) => // todo: There is validation I can do here!
+                  SingleFile(length, name, pieceLen, pieces)
+              }
             case (Some(a), None) => Left(DifferentTypeExpected("BInteger", a.getClass.toString))
             case (None, Some(bEncode)) =>
               (bEncode.as[List[File]], commonFields(dict)).mapN {
@@ -244,22 +278,22 @@ object Info {
 
   implicit val encoder: Encoder[Info] = new Encoder[Info] {
 
-    private def commonFields(name: String, pieceLength: Long, pieces: String): BDictionary =
+    private def commonFields(name: String, pieceLength: Long, pieces: List[SHA1Hash]): BDictionary =
       Bencode.dictStringKeys(
         (nameField, Bencode.fromString(name)),
         (pieceLengthField, Bencode.fromLong(pieceLength)),
-        (piecesField, Bencode.fromString(pieces))
+        (piecesField, BByteString(pieces.map(Hex.decodeHex).foldLeft(Array.empty[Byte]) { _ ++ _ }))
       )
 
     override def apply(t: Info): Bencode =
       t match {
-        case SingleFile(length, name, pieceLength, pieces) =>
+        case SingleFile(length, name, pieceLength, pieceHashes) =>
           BDictionary(Map(Bencode.fromString(lengthField) -> Bencode.fromLong(length)))
-            .merge(commonFields(name, pieceLength, pieces))
-        case MultiFile(files, name, pieceLength, pieces) =>
+            .merge(commonFields(name, pieceLength, pieceHashes))
+        case MultiFile(files, name, pieceLength, pieceHashes) =>
           Bencode
             .dictStringKeys((filesField, BList(files.map(file => File.encoder(file)))))
-            .merge(commonFields(name, pieceLength, pieces))
+            .merge(commonFields(name, pieceLength, pieceHashes))
       }
   }
 }

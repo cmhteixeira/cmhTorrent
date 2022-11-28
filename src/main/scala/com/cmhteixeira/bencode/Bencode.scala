@@ -30,7 +30,7 @@ sealed trait Bencode {
       case _ => that
     }
 
-  final def toPrettyString: String = toPrettyString("")
+  override final def toString: String = toPrettyString("")
 
   protected def toPrettyString(tab: String): String
 }
@@ -45,7 +45,7 @@ object Bencode {
 
     override def asDict: Option[Map[BByteString, Bencode]] =
       None
-    override def toPrettyString(tab: String): String = s"${underlying}e"
+    override def toPrettyString(tab: String): String = s"l${underlying}e"
   }
 
   case class BByteString(underlying: Array[Byte]) extends Bencode {
@@ -58,7 +58,7 @@ object Bencode {
       None
 
     override def toPrettyString(tab: String): String =
-      s"${underlying.length}:${new String(underlying, new UTF_8())}[UTF8]"
+      s"${new String(underlying, new UTF_8())}"
   }
 
   case class BList(underlying: List[Bencode]) extends Bencode {
@@ -71,11 +71,27 @@ object Bencode {
       None
 
     override def toPrettyString(tab: String): String = {
-      val res = underlying.zipWithIndex.map { case (a, b) => s"$tab$b: ${a.toPrettyString(tab)}" }.mkString("\n")
-      s"""${tab}List(l)
-         |  $res
-         |${tab}End(e)
-         |""".stripMargin
+//      val res2 =
+//        underlying
+//          .map {
+//            case (key, value) =>
+//              val keyPretty = key.toPrettyString(tab)
+//              s"${tab + " " * 2}$keyPretty: ${value.toPrettyString(tab + " " * (2 + keyPretty.length + 2))}"
+//          }
+//          .mkString("\n")
+//
+
+      val res =
+        underlying.zipWithIndex
+          .map {
+            case (bencode, index) =>
+              val indexStr: String = index.toString
+              s"${tab + " " * 2}$indexStr: ${bencode.toPrettyString(tab + " " * (2 + indexStr.length + 2))}"
+          }
+          .mkString("\n")
+      s"""LIST(l)
+         |$res
+         |${tab}END(e)""".stripMargin
     }
   }
 
@@ -96,12 +112,18 @@ object Bencode {
       Some(underlying)
 
     override def toPrettyString(tab: String): String = {
+
       val res =
-        underlying.map { case (a, b) => s"$tab${a.toPrettyString(tab)}: ${b.toPrettyString(tab)}" }.mkString("\n")
-      s""" Dict(d)
-        |  $res
-        |End(e)
-        |""".stripMargin
+        underlying
+          .map {
+            case (key, value) =>
+              val keyPretty = key.toPrettyString(tab)
+              s"${tab + " " * 2}$keyPretty: ${value.toPrettyString(tab + " " * (2 + keyPretty.length + 2))}"
+          }
+          .mkString("\n")
+      s"""DICT(d)
+         |$res
+         |${tab}END(e)""".stripMargin
     }
   }
 
@@ -118,12 +140,20 @@ object Bencode {
   def dict(values: (Array[Byte], Bencode)*): BDictionary =
     BDictionary(values.map { case (key, value) => BByteString(key) -> value }.toMap)
 
-  implicit val show: Show[Bencode] = new Show[Bencode] {
-
-    override def show(t: Bencode): String = t.toPrettyString
-  }
+  implicit val show: Show[Bencode] = Show.fromToString
 
   implicit val json: io.circe.Encoder[Bencode] = new circe.Encoder[Bencode] {
-    override def apply(a: Bencode): Json = ???
+
+    override def apply(a: Bencode): Json = //todo: optimize this
+      a match {
+        case BInteger(underlying) => Json.fromLong(underlying)
+        case BByteString(underlying) => Json.fromString(new String(underlying, new UTF_8()))
+        case BList(underlying) => Json.fromValues(underlying.map(apply))
+        case BDictionary(underlying) =>
+          Json.fromFields(underlying.map {
+            case (BByteString(key), value) => (new String(key, new UTF_8()), apply(value))
+          })
+      }
   }
+
 }

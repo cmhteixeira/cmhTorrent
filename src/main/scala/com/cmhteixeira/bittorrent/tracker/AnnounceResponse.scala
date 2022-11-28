@@ -3,7 +3,7 @@ package com.cmhteixeira.bittorrent.tracker
 import cats.Show
 import com.cmhteixeira.bittorrent.Deserializer
 
-import java.net.InetAddress
+import java.net.{Inet4Address, InetAddress}
 import java.nio.ByteBuffer
 
 sealed trait AnnounceResponse {
