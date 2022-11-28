@@ -32,9 +32,9 @@ object Tests2 extends App {
 
   val bencode = parse(torrentBytes).getOrElse(throw new IllegalArgumentException("Not bencode"))
 
-  println(show.toShow(bencode).show)
-
-  System.exit(0)
+//  println(show.toShow(bencode).show)
+//
+//  System.exit(0)
 
   val info = bencode.asDict.get
     .find {

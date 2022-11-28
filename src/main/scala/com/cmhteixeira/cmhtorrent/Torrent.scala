@@ -26,11 +26,9 @@ case class Torrent(
 
 sealed trait Info
 
-case class SingleFile(length: Long, md5sum: Option[String], name: String, pieceLength: Long, pieces: String)
-    extends Info
+case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: String) extends Info
 
-case class MultiFile(files: List[File], md5sum: Option[String], name: String, pieceLength: Long, pieces: String)
-    extends Info
+case class MultiFile(files: List[File], name: String, pieceLength: Long, pieces: String) extends Info
 
 case class File(length: Long, path: List[String])
 
@@ -154,7 +152,6 @@ object Torrent {
       s"""Single-File
          |  name: ${t.name}
          |  length: ${t.length}
-         |  md5sum: ${t.md5sum.getOrElse("NA")}
          |  pieceLength: ${t.pieceLength}
          |  pieces: ${t.pieces.take(15)} [truncated]""".stripMargin
 
@@ -169,7 +166,6 @@ object Torrent {
             |${tab}Size: $size""".stripMargin
         }
         .mkString("")}
-         |  md5sum: ${t.md5sum.getOrElse("NA")}
          |  pieceLength: ${t.pieceLength}
          |  pieces: ${t.pieces.take(15)} [truncated]""".stripMargin
 
@@ -235,11 +231,11 @@ object Info {
                 )
               )
             case (Some(BInteger(length)), None) =>
-              commonFields(dict).map { case (a, b, c) => SingleFile(length, None, a, b, c) }
+              commonFields(dict).map { case (a, b, c) => SingleFile(length, a, b, c) }
             case (Some(a), None) => Left(DifferentTypeExpected("BInteger", a.getClass.toString))
             case (None, Some(bEncode)) =>
               (bEncode.as[List[File]], commonFields(dict)).mapN {
-                case (files, (a, b, c)) => MultiFile(files, None, a, b, c)
+                case (files, (a, b, c)) => MultiFile(files, a, b, c)
               }
           }
         case _ => Left(DecodingFailure.NotABdictionary)
@@ -248,7 +244,7 @@ object Info {
 
   implicit val encoder: Encoder[Info] = new Encoder[Info] {
 
-    private def commonFields(name: String, pieceLength: Long, pieces: String, md5sum: Option[String]): BDictionary =
+    private def commonFields(name: String, pieceLength: Long, pieces: String): BDictionary =
       Bencode.dictStringKeys(
         (nameField, Bencode.fromString(name)),
         (pieceLengthField, Bencode.fromLong(pieceLength)),
@@ -257,13 +253,13 @@ object Info {
 
     override def apply(t: Info): Bencode =
       t match {
-        case SingleFile(length, md5sum, name, pieceLength, pieces) =>
+        case SingleFile(length, name, pieceLength, pieces) =>
           BDictionary(Map(Bencode.fromString(lengthField) -> Bencode.fromLong(length)))
-            .merge(commonFields(name, pieceLength, pieces, md5sum))
-        case MultiFile(files, md5sum, name, pieceLength, pieces) =>
+            .merge(commonFields(name, pieceLength, pieces))
+        case MultiFile(files, name, pieceLength, pieces) =>
           Bencode
             .dictStringKeys((filesField, BList(files.map(file => File.encoder(file)))))
-            .merge(commonFields(name, pieceLength, pieces, md5sum))
+            .merge(commonFields(name, pieceLength, pieces))
       }
   }
 }
