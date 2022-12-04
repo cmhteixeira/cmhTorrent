@@ -1,126 +1,102 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
+import com.cmhteixeira.bittorrent.peerprotocol.State.{Begin, HandshakeError, Handshaked, TcpConnected, TerminalError}
 import org.apache.commons.codec.binary.Hex
-import org.slf4j.{Logger, LoggerFactory}
-import sun.nio.cs.{US_ASCII, UTF_8}
+import org.slf4j.{Logger, LoggerFactory, MDC}
+import sun.nio.cs.US_ASCII
 
-import java.io.InputStream
-import java.net.{Inet4Address, InetSocketAddress, Socket, SocketAddress}
+import java.net.{Inet4Address, InetSocketAddress, Socket, SocketAddress, SocketTimeoutException}
 import java.nio.ByteBuffer
+import java.util.concurrent.{ExecutorService, ScheduledExecutorService, TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.ExecutionContextExecutorService
-import scala.util.Try
+import scala.annotation.tailrec
+import scala.concurrent.ExecutionContext
+import scala.util.{Failure, Success, Try}
 
-private[bittorrent] final class PeerImpl private (
+private[peerprotocol] final class PeerImpl private (
     socket: Socket,
     peerSocket: SocketAddress,
     config: Peer.Config,
     infoHash: Array[Byte],
-    state: AtomicReference[Peer.State],
-    executor: ExecutionContextExecutorService
+    state: AtomicReference[State],
+    mainExecutor: ExecutionContext,
+    scheduler: ScheduledExecutorService,
+    pieces: List[String]
 ) extends Peer {
-  val logger: Logger = LoggerFactory.getLogger(getClass)
+  private val logger: Logger = LoggerFactory.getLogger(getClass)
+  MDC.put("peer-socket", peerSocket.toString)
   logger.info(s"Initiating. Socket: $peerSocket")
-  handShake()
-  executor.execute(readThread())
+  scheduler.execute(connect)
+  mainExecutor.execute(ReadThread(socket, state, infoHash, peerSocket, pieces))
+  scheduler.schedule(sendHandShake, 2, TimeUnit.SECONDS)
 
-  private def readThread(): Runnable =
+  private def sendKeepAlive(): Unit =
+    Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
+      case Failure(exception) =>
+        val msg = "Failed to send keep alive"
+        logger.error(msg, exception)
+      case Success(_) =>
+        logger.info("Sent keep alive.")
+    }
+
+  private def connect: Runnable =
     new Runnable {
 
       override def run(): Unit = {
-        while (
-          state.get() match {
-            case _: Peer.Terminal => false
-            case _ => true
-          }
-        ) {
-          try {
-            state.get() match {
-              case Peer.Begin => receiveHandshake(socket.getInputStream)
-              case state => ???
-            }
-
-            val msgType = socket.getInputStream.readNBytes(4)
-            if (msgType == -1) state.set(Peer.OtherError("TCP connection severed."))
-            else if (msgType == 0) ???
-            else if (msgType == 1) ???
-            else if (msgType == 2) ???
-            else if (msgType == 3) ???
-          } catch {
-            case a => ???
-          }
+        MDC.put("peer-socket", peerSocket.toString)
+        try {
+          socket.connect(peerSocket, config.tcpConnectTimeoutMillis)
+          state.set(State.begin.connected)
+        } catch {
+          case _: SocketTimeoutException =>
+            val msg = s"TCP connection timeout."
+            logger.warn(msg)
+            state.set(State.begin.connectedError(msg))
+          case _ =>
+            val msg = s"TCP connection error. Not connection timeout."
+            logger.warn(msg)
+            state.set(State.begin.connectedError(msg))
         }
       }
     }
 
-  private def receiveNonHandshakeMessage(inputStream: InputStream): Unit = {
-    val msgSizeBuffer = ByteBuffer.allocate(8)
-    val msgTypeResponse = inputStream.readNBytes(4)
-    if (msgTypeResponse.length != 4) state.set(Peer.OtherError("TCP connection severed."))
-    else {
-      val msgSize = msgSizeBuffer.putInt(0).put(msgTypeResponse).getLong
-      val msgType = inputStream.read()
-      if (msgSize == 0L) ??? // keep alive message
-      else if (msgType == 0) choke(msgSize)
-      else if (msgType == 1) unChoke(msgSize)
-      else if (msgType == 2) interested(msgSize)
-      else if (msgType == 3) notInterested(msgSize)
-      else if (msgType == 4) ???
-      else if (msgType == 5) ???
-      else if (msgType == 6) ???
-      else if (msgType == 7) ???
-      else if (msgType == 8) ???
+  private def sendHandShake: Runnable = {
+    new Runnable {
+      override def run(): Unit = {
+        MDC.put("peer-socket", peerSocket.toString)
+        try {
+          state.get() match {
+            case _: Begin =>
+              logger.info("Sending handshake, but not yet connected. Retrying later.")
+              Thread.sleep(100)
+              run()
+            case connected: State.TcpConnected =>
+              createHandShake(connected) match {
+                case Left(value) =>
+                  logger.info("Error creating handshake.")
+                  state.set(connected.handshakeError("Error creating handhsake."))
+
+                case Right(handshake) =>
+                  logger.info(s"Sending handshake to ${peerSocket}")
+                  socket.getOutputStream.write(handshake)
+              }
+            case state => logger.info(s"Doing nothing. State is already $state")
+          }
+        } catch {
+          case e =>
+            val msg = s"Error sending handshake."
+            logger.error(msg)
+            state.set(State.begin.connectedError(msg))
+        }
+      }
     }
+
   }
 
-  private def choke(msgSize: Long): Unit = {
-    if (msgSize != 1L) {
-      logger.warn(s"Received choke but msg size is $msgSize")
-    } else {
-      logger.info("Received choke.")
-    }
-  }
-
-  private def unChoke(msgSize: Long): Unit = ???
-  private def interested(msgSize: Long): Unit = ???
-  private def notInterested(msgSize: Long): Unit = ???
-
-  private def receiveHandshake(input: InputStream): Unit = {
-    (for {
-      protocolLength <- toEither(input.read(), err => Peer.ErrorHandshake("Error extracting protocol length"))
-      protocolLengthValid <-
-        if (protocolLength == -1) Left(Peer.OtherError(s"Protocol length is -1.")) else Right(protocolLength)
-      protocol <- toEither(input.readNBytes(protocolLengthValid), err => Peer.OtherError(err.getMessage))
-      protocolValidated <-
-        if (protocol.length != protocolLengthValid) Left(Peer.OtherError("Protocol length not correct"))
-        else Right(protocol)
-      reservedBytes <- toEither(ByteBuffer.wrap(input.readNBytes(8)).getLong, err => Peer.OtherError(err.getMessage))
-      infoHashRes <- toEither(input.readNBytes(20), err => Peer.OtherError(err.getMessage))
-      infoHashValid <-
-        if (Hex.encodeHexString(infoHashRes) != Hex.encodeHexString(infoHash))
-          Left(Peer.OtherError("InfoHash of request not matching response"))
-        else Right(infoHashRes)
-      peerId <- toEither(input.readNBytes(20), err => Peer.ErrorHandshake(err.getMessage))
-      peerIdValid <-
-        if (peerId.length != 20) Left(Peer.OtherError("PeerId of response not 20 bytes")) else Right(peerId)
-    } yield Handshaked(
-      reservedBytes,
-      new String(peerIdValid, new UTF_8()),
-      new String(protocolValidated, new UTF_8())
-    )) match {
-      case Left(value) =>
-        if (!state.compareAndSet(Peer.Begin, value))
-          logger.info(s"OMG....: ${value}")
-      case Right(value) =>
-        if (!state.compareAndSet(Peer.Begin, value))
-          logger.info(s"OMG....: ${value}")
-    }
-  }
-
-  private def toEither[A](f: => A, error: Throwable => Peer.State): Either[Peer.State, A] =
+  private def toEither[A, B](f: => A, error: Throwable => B): Either[B, A] =
     Try(f).toEither.left.map(error)
 
-  private def createHandShake: Either[Peer.State, Array[Byte]] = {
+  private def createHandShake(connected: TcpConnected): Either[HandshakeError, Array[Byte]] =
     Try {
       val handShake = ByteBuffer.allocate(68)
       handShake.put(19: Byte)
@@ -129,60 +105,33 @@ private[bittorrent] final class PeerImpl private (
       handShake.put(infoHash)
       handShake.put(config.myPeerId.getBytes)
       handShake.array()
-    }.toEither.left.map(err => Peer.OtherError(err.getMessage))
-  }
+    }.toEither.left.map(err => connected.handshakeError(err.getMessage))
 
-  private def handShake(): Unit = {
-    (for {
-      _ <- toEither(socket.connect(peerSocket, config.tcpConnectTimeoutMillis), err => Peer.TcpIssue(err.getMessage))
-      input <- toEither(socket.getInputStream, error => Peer.TcpIssue(error.getMessage))
-      output <- toEither(socket.getOutputStream, error => Peer.TcpIssue(error.getMessage))
-      handShake <- createHandShake
-      _ <- toEither(output.write(handShake), err => Peer.TcpIssue(err.getMessage))
-      protocolLength <- toEither(input.read(), err => Peer.ErrorHandshake("Error extracting protocol length"))
-      protocolLengthValid <-
-        if (protocolLength == -1) Left(Peer.OtherError(s"Protocol length is -1.")) else Right(protocolLength)
-      protocol <- toEither(input.readNBytes(protocolLengthValid), err => Peer.OtherError(err.getMessage))
-      protocolValidated <-
-        if (protocol.length != protocolLengthValid) Left(Peer.OtherError("Protocol length not correct"))
-        else Right(protocol)
-      reservedBytes <- toEither(ByteBuffer.wrap(input.readNBytes(8)).getLong, err => Peer.OtherError(err.getMessage))
-      infoHashRes <- toEither(input.readNBytes(20), err => Peer.OtherError(err.getMessage))
-      infoHashValid <-
-        if (Hex.encodeHexString(infoHashRes) != Hex.encodeHexString(infoHash))
-          Left(Peer.OtherError("InfoHash of request not matching response"))
-        else Right(infoHashRes)
-      peerId <- toEither(input.readNBytes(20), err => Peer.ErrorHandshake(err.getMessage))
-      peerIdValid <-
-        if (peerId.length != 20) Left(Peer.OtherError("PeerId of response not 20 bytes")) else Right(peerId)
-    } yield Handshaked(
-      reservedBytes,
-      new String(peerIdValid, new UTF_8()),
-      new String(protocolValidated, new UTF_8())
-    )) match {
-      case Left(value) =>
-        if (!state.compareAndSet(Peer.Begin, value))
-          logger.info(s"OMG....: ${value}")
-      case Right(value) =>
-        if (!state.compareAndSet(Peer.Begin, value))
-          logger.info(s"OMG....: ${value}")
-    }
-  }
+  override def getState: State = state.get()
 
-  override def getState: Peer.State = state.get()
-
+  override def peerAddress: SocketAddress = peerSocket
 }
 
 object PeerImpl {
   private val protocol: String = "BitTorrent protocol"
 
-  def apply(peerIp: Inet4Address, peerPort: Int, config: Peer.Config, infoHash: Array[Byte]): PeerImpl =
+  def apply(
+      peerIp: Inet4Address,
+      peerPort: Int,
+      config: Peer.Config,
+      infoHash: Array[Byte],
+      mainExecutor: ExecutionContext,
+      scheduledExecutorService: ScheduledExecutorService,
+      pieces: List[String]
+  ): PeerImpl =
     new PeerImpl(
       new Socket(),
       new InetSocketAddress(peerIp, peerPort),
       config,
       infoHash,
-      new AtomicReference[Peer.State](Peer.Begin),
-      ???
+      new AtomicReference[State](State.begin),
+      mainExecutor,
+      scheduledExecutorService,
+      pieces
     )
 }
