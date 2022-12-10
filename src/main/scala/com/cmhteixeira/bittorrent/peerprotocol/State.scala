@@ -2,7 +2,7 @@ package com.cmhteixeira.bittorrent.peerprotocol
 
 import java.io.Serializable
 
-sealed trait State extends Product with Serializable
+private[peerprotocol] sealed trait State extends Product with Serializable
 
 object State {
 
