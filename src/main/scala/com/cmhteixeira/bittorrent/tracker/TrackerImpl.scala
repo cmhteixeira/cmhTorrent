@@ -23,7 +23,7 @@ private[tracker] class TrackerImpl private (
 ) extends Tracker {
   private val logger = LoggerFactory.getLogger(getClass)
   mainExecutor.execute(ReaderThread(socket, trackers))
-  def submit(i: Tracker.Torrent): Unit = firstSubmission(i, i.infoHash)
+  def submit(i: Torrent): Unit = firstSubmission(i, i.infoHash)
 
   private def sendConnect(transactionId: Int, trackerSocket: InetSocketAddress): Try[Unit] = {
     val payload = ConnectRequest(transactionId).serialize
@@ -57,7 +57,7 @@ private[tracker] class TrackerImpl private (
   }
 
   @tailrec
-  private def firstSubmission(torrent: Tracker.Torrent, infoHash: InfoHash): Unit = {
+  private def firstSubmission(torrent: Torrent, infoHash: InfoHash): Unit = {
     val currentState = trackers.get()
     if (currentState.exists { case (hash, _) => hash == infoHash }) ()
     else {

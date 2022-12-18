@@ -8,15 +8,15 @@ import java.net.InetSocketAddress
 trait Tracker {
   def peers(infoHash: InfoHash): List[Tracker.Peer]
 
-  def submit(torrent: Tracker.Torrent): Unit
+  def submit(torrent: Torrent): Unit
 }
 
 object Tracker {
   case class Peer(socketAddress: InetSocketAddress) extends AnyVal
 
-  case class Torrent(
-      infoHash: InfoHash,
-      announce: InetSocketAddress,
-      announceList: Option[NonEmptyList[NonEmptyList[InetSocketAddress]]]
-  )
+//  case class Torrent(
+//      infoHash: InfoHash,
+//      announce: InetSocketAddress,
+//      announceList: Option[NonEmptyList[NonEmptyList[InetSocketAddress]]]
+//  )
 }
