@@ -4,7 +4,7 @@ import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.tracker.ReaderThread.maximumUdpPacketSize
 import org.slf4j.LoggerFactory
 
-import java.net.{DatagramPacket, DatagramSocket, InetAddress, InetSocketAddress}
+import java.net.{DatagramPacket, DatagramSocket, InetSocketAddress}
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec

@@ -1,6 +1,8 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
+import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.State._
+import com.cmhteixeira.cmhtorrent.PieceHash
 import org.apache.commons.codec.binary.Hex
 import org.slf4j.{Logger, LoggerFactory, MDC}
 import sun.nio.cs.UTF_8
@@ -15,7 +17,7 @@ import scala.util.{Failure, Success, Try}
 private[peerprotocol] class ReadThread private (
     socket: Socket,
     state: AtomicReference[State],
-    infoHash: Array[Byte],
+    infoHash: InfoHash,
     peerAddress: SocketAddress,
     pieces: List[String]
 ) extends Runnable {
@@ -183,9 +185,6 @@ private[peerprotocol] class ReadThread private (
         val isSet = (theByte & (1.toByte << (7 - bitIndexWithinByte))) != 0
         (pieceHash, isSet)
     }
-//    logger.info(
-//      s"Peer has the following pieces: [${peerPieces.map { case (hash, has) => s"$hash:$has" }.mkString(", ")}]"
-//    )
     setPeerPieces(peerPieces)
   }
 
@@ -245,8 +244,8 @@ private[peerprotocol] class ReadThread private (
       reservedBytes <-
         toEither(ByteBuffer.wrap(input.readNBytes(8)).getLong, err => begin.handshakeError(err.getMessage))
       infoHashRes <- toEither(input.readNBytes(20), err => begin.handshakeError(err.getMessage))
-      infoHashValid <-
-        if (Hex.encodeHexString(infoHashRes) != Hex.encodeHexString(infoHash))
+      _ <-
+        if (java.util.Arrays.equals(infoHashRes, infoHash.bytes))
           Left(begin.handshakeError("InfoHash of request not matching response"))
         else Right(infoHashRes)
       peerId <- toEither(input.readNBytes(20), err => begin.handshakeError(err.getMessage))
@@ -277,7 +276,7 @@ object ReadThread {
   private[peerprotocol] def apply(
       socket: Socket,
       state: AtomicReference[State],
-      infoHash: Array[Byte],
+      infoHash: InfoHash,
       peerAddress: SocketAddress,
       pieces: List[String]
   ): ReadThread =

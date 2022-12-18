@@ -8,18 +8,9 @@ import cats.implicits.{
   toTraverseOps
 }
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
-import com.cmhteixeira.bencode.DecodingFailure.{
-  DictionaryKeyMissing,
-  DifferentTypeExpected,
-  GenericDecodingFailure,
-  NotABdictionary
-}
+import com.cmhteixeira.bencode.DecodingFailure.{DictionaryKeyMissing, DifferentTypeExpected, GenericDecodingFailure}
 import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure, Encoder}
-import com.cmhteixeira.cmhtorrent.Info.SHA1Hash
-import com.sun.tools.javac.util.ArrayUtils
-import io.circe.{Json, JsonObject}
 import org.apache.commons.codec.binary.Hex
-import sun.nio.cs.UTF_8
 
 import java.sql.Date
 import java.util
@@ -35,9 +26,9 @@ case class Torrent(
 
 sealed trait Info
 
-case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: List[SHA1Hash]) extends Info
+case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: List[PieceHash]) extends Info
 
-case class MultiFile(files: List[File], name: String, pieceLength: Long, pieces: List[SHA1Hash]) extends Info
+case class MultiFile(files: List[File], name: String, pieceLength: Long, pieces: List[PieceHash]) extends Info
 
 case class File(length: Long, path: List[String])
 
@@ -202,7 +193,6 @@ object Torrent {
 }
 
 object Info {
-  type SHA1Hash = String
   private val lengthField = "length"
   private val filesField = "files"
   private val nameField = "name"
@@ -211,7 +201,7 @@ object Info {
 
   implicit val decoder: Decoder[Info] = new Decoder[Info] {
 
-    private def commonFields(dict: BDictionary): Either[DecodingFailure, (String, Long, List[String])] = {
+    private def commonFields(dict: BDictionary): Either[DecodingFailure, (String, Long, List[PieceHash])] = {
       (
         for {
           value <- dict(nameField).toRight(DictionaryKeyMissing(nameField))
@@ -230,19 +220,16 @@ object Info {
             hexHashes <-
               if (str.length % 20 != 0)
                 Left(GenericDecodingFailure("Pieces field does not contain multiple of 20 bytes."))
-              else {
-                val numberPieces = str.length / 20
-                Right(
-                  (0 until numberPieces)
-                    .map(i => (i * 20, i * 20 + 20))
-                    .map {
-                      case (startInclusive, endExclusive) => util.Arrays.copyOfRange(str, startInclusive, endExclusive)
-                    }
-                    .map(Hex.encodeHexString)
-                    .toList
-                )
+              else
+                (0 until (str.length / 20))
+                  .map(i => (i * 20, i * 20 + 20))
+                  .map {
+                    case (startInclusive, endExclusive) => util.Arrays.copyOfRange(str, startInclusive, endExclusive)
+                  }
+                  .toList
+                  .traverse(PieceHash(_))
+                  .toRight(GenericDecodingFailure("Error extracting one or more piece hashes."))
 
-              }
           } yield hexHashes
         }
       ).mapN { case (name, pieceLength, pieces) => (name, pieceLength, pieces) }
@@ -278,11 +265,11 @@ object Info {
 
   implicit val encoder: Encoder[Info] = new Encoder[Info] {
 
-    private def commonFields(name: String, pieceLength: Long, pieces: List[SHA1Hash]): BDictionary =
+    private def commonFields(name: String, pieceLength: Long, pieces: List[PieceHash]): BDictionary =
       Bencode.dictStringKeys(
         (nameField, Bencode.fromString(name)),
         (pieceLengthField, Bencode.fromLong(pieceLength)),
-        (piecesField, BByteString(pieces.map(Hex.decodeHex).foldLeft(Array.empty[Byte]) { _ ++ _ }))
+        (piecesField, BByteString(pieces.map(_.bytes).foldLeft(Array.empty[Byte]) { _ ++ _ }))
       )
 
     override def apply(t: Info): Bencode =
@@ -296,4 +283,27 @@ object Info {
             .merge(commonFields(name, pieceLength, pieceHashes))
       }
   }
+}
+
+sealed trait PieceHash extends Product {
+  def hex: String
+  def bytes: Array[Byte]
+
+  override final def productElement(n: Int): Any =
+    if (n == 0) hex else throw new IndexOutOfBoundsException(n)
+  override final def productArity: Int = 0
+
+  override final def canEqual(that: Any): Boolean =
+    if (!that.isInstanceOf[PieceHash]) false else hex == that.asInstanceOf[PieceHash].hex
+}
+
+object PieceHash {
+
+  def apply(in: Array[Byte]): Option[PieceHash] =
+    if (in.length != 20) None
+    else
+      Some(new PieceHash {
+        override def hex: String = Hex.encodeHexString(in)
+        override def bytes: Array[Byte] = util.Arrays.copyOf(in, in.length)
+      })
 }

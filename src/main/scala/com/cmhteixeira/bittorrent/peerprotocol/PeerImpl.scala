@@ -1,23 +1,23 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import com.cmhteixeira.bittorrent.peerprotocol.State.{Begin, HandshakeError, Handshaked, TcpConnected, TerminalError}
-import org.apache.commons.codec.binary.Hex
+import com.cmhteixeira.bittorrent.InfoHash
+import com.cmhteixeira.bittorrent.peerprotocol.State.{Begin, HandshakeError, TcpConnected}
 import org.slf4j.{Logger, LoggerFactory, MDC}
 import sun.nio.cs.US_ASCII
 
-import java.net.{Inet4Address, InetSocketAddress, Socket, SocketAddress, SocketTimeoutException}
+import java.net._
 import java.nio.ByteBuffer
-import java.util.concurrent.{ExecutorService, ScheduledExecutorService, TimeUnit}
+import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
-import scala.annotation.tailrec
-import scala.concurrent.ExecutionContext
+import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
+import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 private[peerprotocol] final class PeerImpl private (
     socket: Socket,
     peerSocket: SocketAddress,
     config: Peer.Config,
-    infoHash: Array[Byte],
+    infoHash: InfoHash,
     state: AtomicReference[State],
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
@@ -102,7 +102,7 @@ private[peerprotocol] final class PeerImpl private (
       handShake.put(19: Byte)
       handShake.put(PeerImpl.protocol.getBytes(new US_ASCII()))
       handShake.putLong(0)
-      handShake.put(infoHash)
+      handShake.put(infoHash.bytes)
       handShake.put(config.myPeerId.getBytes)
       handShake.array()
     }.toEither.left.map(err => connected.handshakeError(err.getMessage))
@@ -110,23 +110,27 @@ private[peerprotocol] final class PeerImpl private (
   override def getState: State = state.get()
 
   override def peerAddress: SocketAddress = peerSocket
+
+  override def download(pieceHash: String): Future[Path] =
+    Future.failed(
+      new NotImplementedError(s"Download piece with hash '$pieceHash'.This API method is yet to be implemented.")
+    )
 }
 
 object PeerImpl {
   private val protocol: String = "BitTorrent protocol"
 
   def apply(
-      peerIp: Inet4Address,
-      peerPort: Int,
+      peerSocket: InetSocketAddress,
       config: Peer.Config,
-      infoHash: Array[Byte],
+      infoHash: InfoHash,
       mainExecutor: ExecutionContext,
       scheduledExecutorService: ScheduledExecutorService,
       pieces: List[String]
   ): PeerImpl =
     new PeerImpl(
       new Socket(),
-      new InetSocketAddress(peerIp, peerPort),
+      peerSocket,
       config,
       infoHash,
       new AtomicReference[State](State.begin),
