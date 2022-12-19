@@ -24,7 +24,9 @@ private[tracker] case class AnnounceRequest(
   def serialize: Array[Byte] = {
     val bytes = ByteBuffer.allocate(98)
     bytes.putLong(connectionId)
-    bytes.putInt(1) // equates to announce
+    bytes.putInt(action match {
+      case Announce => 1 // equates to announce
+    })
     bytes.putInt(transactionId)
     bytes.put(infoHash.bytes)
     bytes.put(peerId.underlying.getBytes(new UTF_8))

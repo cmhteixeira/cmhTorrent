@@ -3,9 +3,9 @@ package com.cmhteixeira.bittorrent.tracker
 import java.nio.ByteBuffer
 import scala.util.{Failure, Success, Try}
 
-case class ConnectResponse(transactionId: Int, connectionId: Long)
+private[tracker] case class ConnectResponse(transactionId: Int, connectionId: Long)
 
-object ConnectResponse {
+private[tracker] object ConnectResponse {
 
   def deserialize(in: Array[Byte]): Either[String, ConnectResponse] = {
     val byteBuffer = ByteBuffer.wrap(in)

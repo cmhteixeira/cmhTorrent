@@ -1,9 +1,8 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import java.io.File
 import java.net.SocketAddress
 import java.nio.file.Path
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.Future
 
 trait Peer {
   def getState: State

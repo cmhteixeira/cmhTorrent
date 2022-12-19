@@ -28,7 +28,7 @@ private[bittorrent] class SwarmImpl private (
 
       def run(): Unit = {
         val currentPeers = peers
-        val trackerPeers = tracker.peers(???).map(_.socketAddress)
+        val trackerPeers = tracker.peers(???)
         val newPeers = trackerPeers.filterNot(trackerPeers.contains)
         val res = newPeers
           .map(peerSocket =>

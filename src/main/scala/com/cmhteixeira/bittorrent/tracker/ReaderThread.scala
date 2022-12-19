@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
 
-class ReaderThread private (
+private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
     trackers: AtomicReference[Map[InfoHash, Tiers]]
 ) extends Runnable {
@@ -103,7 +103,7 @@ class ReaderThread private (
   }
 }
 
-object ReaderThread {
+private[tracker] object ReaderThread {
   private val maximumUdpPacketSize = 65507
 
   def apply(

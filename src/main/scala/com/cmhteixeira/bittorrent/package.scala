@@ -14,10 +14,11 @@ package object bittorrent {
   }
 
   object PeerId {
+    private case class PeerIdImpl(underlying: String) extends PeerId
 
     def apply(peerId: String): Option[PeerId] =
       if (peerId.getBytes(new UTF_8).length != 20) None
-      else Some(new PeerId { override val underlying: String = peerId })
+      else Some(PeerIdImpl(peerId))
   }
 
   sealed trait InfoHash {

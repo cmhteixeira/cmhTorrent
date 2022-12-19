@@ -4,7 +4,7 @@ import cats.Show
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.ByteBuffer
 
-case class AnnounceResponse(
+private[tracker] case class AnnounceResponse(
     action: Int,
     transactionId: Int,
     interval: Int,
@@ -13,7 +13,7 @@ case class AnnounceResponse(
     peers: List[InetSocketAddress]
 )
 
-object AnnounceResponse {
+private[tracker] object AnnounceResponse {
 
   private def extractPeers(
       numPeersRemaining: Int,

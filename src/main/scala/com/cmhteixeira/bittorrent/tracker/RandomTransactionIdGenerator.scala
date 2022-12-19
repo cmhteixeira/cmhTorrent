@@ -3,7 +3,7 @@ package com.cmhteixeira.bittorrent.tracker
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 
-class RandomTransactionIdGenerator private (s: SecureRandom) extends TransactionIdGenerator {
+private[tracker] class RandomTransactionIdGenerator private (s: SecureRandom) extends TransactionIdGenerator {
 
   override def newTransactionId(): Int = {
     val byteBuffer = ByteBuffer.allocate(4)

@@ -2,7 +2,6 @@ package com.cmhteixeira.bittorrent.tracker
 
 import cats.data.NonEmptyList
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
-import com.cmhteixeira.bittorrent.tracker.Tracker.Peer
 import com.cmhteixeira.bittorrent.tracker.TrackerImpl.Config
 import org.slf4j.LoggerFactory
 
@@ -252,9 +251,9 @@ private[tracker] class TrackerImpl private (
     }
   }
 
-  override def peers(infoHash: InfoHash): List[Tracker.Peer] =
+  override def peers(infoHash: InfoHash): List[InetSocketAddress] =
     trackers.get().get(infoHash) match {
-      case Some(Tiers(_, CurrentTier((_, AnnounceReceived(_, _, peers)), _), _)) => peers.map(Peer)
+      case Some(Tiers(_, CurrentTier((_, AnnounceReceived(_, _, peers)), _), _)) => peers
       case _ => List.empty
     }
 }
