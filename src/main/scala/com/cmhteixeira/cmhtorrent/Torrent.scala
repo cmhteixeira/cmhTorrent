@@ -285,16 +285,14 @@ object Info {
   }
 }
 
-sealed trait PieceHash extends Product {
+sealed trait PieceHash {
   def hex: String
   def bytes: Array[Byte]
 
-  override final def productElement(n: Int): Any =
-    if (n == 0) hex else throw new IndexOutOfBoundsException(n)
-  override final def productArity: Int = 0
+  override def equals(obj: Any): Boolean =
+    if (!obj.isInstanceOf[PieceHash]) false else util.Arrays.equals(bytes, obj.asInstanceOf[PieceHash].bytes)
 
-  override final def canEqual(that: Any): Boolean =
-    if (!that.isInstanceOf[PieceHash]) false else hex == that.asInstanceOf[PieceHash].hex
+  override def toString: String = hex
 }
 
 object PieceHash {

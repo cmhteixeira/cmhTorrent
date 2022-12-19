@@ -26,6 +26,9 @@ package object bittorrent {
     def bytes: Array[Byte]
 
     override final def toString: String = hex
+
+    override def equals(obj: Any): Boolean =
+      if (!obj.isInstanceOf[InfoHash]) false else util.Arrays.equals(obj.asInstanceOf[InfoHash].bytes, bytes)
   }
 
   object InfoHash {
@@ -36,7 +39,7 @@ package object bittorrent {
 
       new InfoHash {
         override val hex: String = Hex.encodeHexString(infoHash)
-        override val bytes: Array[Byte] = util.Arrays.copyOf(infoHash, infoHash.length)
+        override val bytes: Array[Byte] = infoHash
       }
     }
 

@@ -111,9 +111,9 @@ private[peerprotocol] final class PeerImpl private (
 
   override def peerAddress: SocketAddress = peerSocket
 
-  override def download(pieceHash: String): Future[Path] =
+  override def download(pieceIndex: Int): Future[Path] =
     Future.failed(
-      new NotImplementedError(s"Download piece with hash '$pieceHash'.This API method is yet to be implemented.")
+      new NotImplementedError(s"Download piece '$pieceIndex'.This API method is yet to be implemented.")
     )
 }
 

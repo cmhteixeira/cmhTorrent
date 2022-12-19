@@ -12,7 +12,7 @@ import scala.util.{Failure, Success, Try}
 
 private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
-    trackers: AtomicReference[Map[InfoHash, Tiers]]
+    state: AtomicReference[Map[InfoHash, Tiers[State]]]
 ) extends Runnable {
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -24,7 +24,6 @@ private[tracker] class ReaderThread private (
         Thread.sleep(500)
         run()
       case Success(_) =>
-        logger.info("Received a new udp packet.")
         processPacket(packet)
         run()
     }
@@ -33,17 +32,16 @@ private[tracker] class ReaderThread private (
   private def processPacket(i: DatagramPacket): Unit = {
     val payloadSize = i.getLength
     if (payloadSize == 16) { // could be ConnectResponse
-      logger.info(s"Packet is $payloadSize bytes. Could be Connect response.")
       ConnectResponse.deserialize(i.getData) match {
         case Left(error) =>
           val msg =
-            s"Received packet from '${i.getSocketAddress}' with 16 bytes, but not possible to deserialize into an Connect response: '$error'"
+            s"Received packet from '${i.getSocketAddress}' with 16 bytes, but not possible to deserialize into an Connect response: '$error'."
           logger.warn(msg)
         case Right(connectResponse) =>
-          logger.info(s"Received potential Connect response from '${i.getSocketAddress}'")
+          logger.info(s"Received potential Connect response from '${i.getSocketAddress}'.")
           processConnect(i.getSocketAddress.asInstanceOf[InetSocketAddress], connectResponse, System.nanoTime())
       }
-    } else if ((payloadSize - 20) % 6 == 0) { // could be an AnnounceResponse
+    } else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) { // could be an AnnounceResponse
       AnnounceResponse.deserialize(i.getData, payloadSize) match {
         case Left(value) =>
           val msg =
@@ -54,51 +52,51 @@ private[tracker] class ReaderThread private (
           processAnnounce(i.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
       }
     } else
-      logger.warn("Packet does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'")
+      logger.warn(
+        s"Received packet with $payloadSize bytes from '${i.getSocketAddress}'. It does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'."
+      )
   }
 
   @tailrec
   private def processConnect(origin: InetSocketAddress, connectResponse: ConnectResponse, timestamp: Long): Unit = {
-    val currentState = trackers.get()
-    currentState
-      .map {
-        case (hash, tiers) =>
-          tiers.possibleConnectRes(origin, connectResponse, timestamp).map(newState => (hash, newState))
-      }
-      .flatten
-      .toList match {
-      case Nil => logger.warn(s"Received possible connect response from '$origin', but no state across all torrents")
-      case (infoHash, (ConnectSent(_, channel), tiers)) :: Nil =>
-        val newState = currentState + (infoHash -> tiers)
-        if (!trackers.compareAndSet(currentState, newState)) processConnect(origin, connectResponse, timestamp)
+    val currentState = state.get()
+    val ConnectResponse(txnId, connectId) = connectResponse
+    currentState.flatMap {
+      case (infoHash, tiers) => tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
+    }.toList match {
+      case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
+      case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
+      case (infoHash, tiers, ConnectSent(_, channel, _)) :: Nil =>
+        val newState = currentState + (infoHash -> tiers.updateEntry(
+          origin,
+          ConnectReceived(connectResponse.connectionId, timestamp)
+        ))
+        if (!state.compareAndSet(currentState, newState)) processConnect(origin, connectResponse, timestamp)
         else {
           logger.info(
-            s"Received Connect response from '$origin' for torrent '$infoHash'. Transaction id: '${connectResponse.transactionId}'.Connection id: '${connectResponse.connectionId}'."
+            s"Received Connect response from '$origin' for '$infoHash'. TxnId: '$txnId'. Connection Id: '$connectId'."
           )
           channel.success(())
         }
-      case head :: more =>
-        logger.error("omg....this is a big error") // todo. handle this better? This would have meant a txnId collision?
     }
   }
 
   @tailrec
   private def processAnnounce(origin: InetSocketAddress, announceResponse: AnnounceResponse): Unit = {
-    val currentState = trackers.get()
-    currentState
-      .map {
-        case (hash, tiers) =>
-          tiers.possibleAnnounceResponse(origin, announceResponse).map(newState => (hash, newState))
-      }
-      .flatten
-      .toList match {
-      case Nil => logger.warn(s"Received possible connect response from $origin, but no state across all torrents")
-      case (head @ (infoHash, _)) :: Nil =>
-        val newState = currentState + head
-        if (!trackers.compareAndSet(currentState, newState)) processAnnounce(origin, announceResponse)
-        else logger.info(s"Received Announce response from '$origin' for torrent '$infoHash'")
-      case head :: more =>
-        logger.error("omg....this is a big error") // todo. handle this better? This would have meant a txnId collision?
+    val currentState = state.get()
+    val AnnounceResponse(_, _, _, leechers, seeders, peers) = announceResponse
+    currentState.flatMap {
+      case (infoHash, tiers) => tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
+    }.toList match {
+      case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
+      case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
+      case (infoHash, tiers, AnnounceSent(txnId, _, _, _)) :: Nil =>
+        val newState =
+          currentState + (infoHash -> tiers.updateEntry(origin, AnnounceReceived(leechers, seeders, peers)))
+
+        if (!state.compareAndSet(currentState, newState)) processAnnounce(origin, announceResponse)
+        else
+          logger.info(s"Received Announce response from '$origin' for torrent '$infoHash' with txnId: '$txnId'")
     }
   }
 }
@@ -108,6 +106,6 @@ private[tracker] object ReaderThread {
 
   def apply(
       socket: DatagramSocket,
-      state: AtomicReference[Map[InfoHash, Tiers]]
+      state: AtomicReference[Map[InfoHash, Tiers[State]]]
   ): ReaderThread = new ReaderThread(socket, state)
 }

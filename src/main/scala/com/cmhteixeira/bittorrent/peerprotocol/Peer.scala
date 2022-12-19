@@ -7,7 +7,7 @@ import scala.concurrent.Future
 trait Peer {
   def getState: State
 
-  def download(pieceHash: String): Future[Path]
+  def download(pieceIndex: Int): Future[Path]
 
   def peerAddress: SocketAddress
 }

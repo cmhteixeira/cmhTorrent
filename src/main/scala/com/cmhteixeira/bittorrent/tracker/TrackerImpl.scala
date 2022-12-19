@@ -1,8 +1,7 @@
 package com.cmhteixeira.bittorrent.tracker
 
-import cats.data.NonEmptyList
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
-import com.cmhteixeira.bittorrent.tracker.TrackerImpl.Config
+import com.cmhteixeira.bittorrent.tracker.TrackerImpl.{Config, limitConnectionId, retries}
 import org.slf4j.LoggerFactory
 
 import java.net.{DatagramPacket, DatagramSocket, InetSocketAddress}
@@ -12,17 +11,27 @@ import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Promise}
 import scala.util.{Failure, Success, Try}
 
-private[tracker] class TrackerImpl private (
+private[tracker] final class TrackerImpl private (
     socket: DatagramSocket,
-    trackers: AtomicReference[Map[InfoHash, Tiers]],
+    state: AtomicReference[Map[InfoHash, Tiers[State]]],
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
     config: Config,
     txnIdGenerator: TransactionIdGenerator
 ) extends Tracker {
   private val logger = LoggerFactory.getLogger(getClass)
-  mainExecutor.execute(ReaderThread(socket, trackers))
-  def submit(i: Torrent): Unit = firstSubmission(i, i.infoHash)
+  mainExecutor.execute(ReaderThread(socket, state))
+
+  @tailrec
+  def submit(torrent: Torrent): Unit = {
+    val currentState = state.get()
+    if (currentState.exists { case (hash, _) => hash == torrent.infoHash }) ()
+    else {
+      val entry = Tiers.start(txnIdGenerator, torrent)
+      if (!state.compareAndSet(currentState, currentState + (torrent.infoHash -> entry))) submit(torrent)
+      else entry.toList.foreach { case (socket, state) => sendConnect(torrent.infoHash, socket, state) }
+    }
+  }
 
   private def sendConnect(transactionId: Int, trackerSocket: InetSocketAddress): Try[Unit] = {
     val payload = ConnectRequest(transactionId).serialize
@@ -55,205 +64,162 @@ private[tracker] class TrackerImpl private (
     Try(socket.send(new DatagramPacket(payload, payload.length, trackerSocket)))
   }
 
-  @tailrec
-  private def firstSubmission(torrent: Torrent, infoHash: InfoHash): Unit = {
-    val currentState = trackers.get()
-    if (currentState.exists { case (hash, _) => hash == infoHash }) ()
-    else {
-      val txnId = txnIdGenerator.newTransactionId()
-      val connectReceivedChannel = Promise[Unit]()
-      val connectSent = ConnectSent(txnId, connectReceivedChannel)
-      val tiers =
-        torrent.announceList.fold(Tiers.fromSinglePeer(torrent.announce, connectSent))(announceList =>
-          Tiers.fromMultipleTiers(announceList, connectSent)
-        )
+  private def sendConnect(infoHash: InfoHash, tracker: InetSocketAddress, connectSent: ConnectSent): Unit = {
+    val ConnectSent(txnId, channel, tries) = connectSent
+    val delayInSeconds = retries(tries)
+    sendConnect(txnId, tracker) match {
+      case Failure(exception) =>
+        logger.warn(s"Sending Connect to '$tracker' for '$infoHash' with transaction id '$txnId'.", exception)
+        scheduleConnectResponseCheck(infoHash, tracker, txnId, delayInSeconds)
 
-      if (!trackers.compareAndSet(currentState, currentState + (infoHash -> tiers))) firstSubmission(torrent, infoHash)
-      else {
-        val (trackerSocket, _) = tiers.currentState
-        sendConnect(txnId, trackerSocket) match {
-          case Failure(exception) => // does this guarantee the tracker never received it?
-            logger.warn(
-              s"Sending Connect to '$trackerSocket' for '$infoHash' with transaction id '$txnId'.",
-              exception
-            )
-            checkConnectResponse(infoHash, txnId)
-          case Success(_) =>
-            logger.info(s"Sent Connect to '$trackerSocket' for '$infoHash' with transaction id '$txnId'.")
-            doWhenConnectResponseReceived(connectReceivedChannel, infoHash)
-            scheduleConnectResponseCheck(infoHash, txnId)
-        }
-      }
+      case Success(_) =>
+        logger.info(s"Sent Connect to '$tracker' for '$infoHash' with transaction id '$txnId'.")
+        doWhenConnectResponseReceived(channel, infoHash, tracker)
+        scheduleConnectResponseCheck(infoHash, tracker, txnId, delayInSeconds)
     }
   }
 
-  private def scheduleConnectResponseCheck(infoHash: InfoHash, txnId: Int): Unit =
+  private def scheduleConnectResponseCheck(
+      infoHash: InfoHash,
+      tracker: InetSocketAddress,
+      txnId: Int,
+      delay: Int
+  ): Unit =
     scheduler.schedule(
-      new Runnable { def run(): Unit = checkConnectResponse(infoHash, txnId) },
-      15,
+      new Runnable { def run(): Unit = checkConnectResponse(infoHash, tracker, txnId) },
+      delay,
       TimeUnit.SECONDS
     )
 
-  private def doWhenConnectResponseReceived(promise: Promise[Unit], infoHash: InfoHash): Unit =
+  private def doWhenConnectResponseReceived(
+      promise: Promise[Unit],
+      infoHash: InfoHash,
+      trackerSocket: InetSocketAddress
+  ): Unit =
     promise.future.onComplete {
       case Failure(exception) => logger.error(s"This should be impossible.", exception) // todo: Fix this?
-      case Success(_) => sendAnnounce(infoHash)
+      case Success(_) => sendAnnounce(infoHash, trackerSocket)
     }(mainExecutor)
 
   @tailrec
-  private def sendAnnounce(infoHash: InfoHash): Unit = {
-    val currentState = trackers.get()
+  private def sendAnnounce(infoHash: InfoHash, tracker: InetSocketAddress): Unit = {
+    val currentState = state.get()
     currentState.get(infoHash) match {
-      case Some(tiers @ Tiers(_, currentTier @ CurrentTier((socket, ConnectReceived(connectId, _)), _), _)) =>
-        val txnId = txnIdGenerator.newTransactionId()
-        val newStateForHash = tiers.copy(current = currentTier.copy(current = (socket, AnnounceSent(txnId))))
-
-        if (!trackers.compareAndSet(currentState, currentState + (infoHash -> newStateForHash))) sendAnnounce(infoHash)
-        else {
-          sendAnnounce(infoHash, connectId, txnId, socket) match {
-            case Failure(exception) =>
-              logger.warn(
-                s"Sending Announce to '$socket' for '$infoHash' within connection id '$connectId' with txnId '$txnId'.",
-                exception
-              )
-              checkAnnounceResponse(infoHash, txnId)
-            case Success(_) =>
-              logger.info(
-                s"Sent Announce to '$socket' for '$infoHash' within connection id '$connectId' and txnId '$txnId'"
-              )
-              scheduleAnnounceResponseCheck(infoHash, txnId)
-          }
+      case Some(tiers) =>
+        tiers.get(tracker) match {
+          case Some(ConnectReceived(conId, timestamp)) =>
+            val announce = AnnounceSent(txnIdGenerator.newTransactionId(), conId, timestamp, 0)
+            val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
+            if (!state.compareAndSet(currentState, newState)) sendAnnounce(infoHash, tracker)
+            else sendAnnounc(infoHash, announce, tracker)
+          case Some(state) => logger.info(s"Sending Announce to '$tracker' for '$infoHash', but state is '$state'")
+          case None => logger.info(s"Sending Announce to '$tracker' for '$infoHash' but tracker not registered.")
         }
-
-      case Some(Tiers(_, CurrentTier((_, state), _), _)) =>
-        logger.warn(s"Was going to send announce from triggering, but state is now '$state'. Doing nothing ...")
-      case None => logger.warn("What does this mean?")
+      case None => logger.warn(s"Sending Announce to '$tracker' but '$infoHash' not registered.")
     }
   }
 
-  private def scheduleAnnounceResponseCheck(infoHash: InfoHash, txnId: Int): Unit =
+  private def sendAnnounc(infoHash: InfoHash, announce: AnnounceSent, tracker: InetSocketAddress): Unit = {
+    val AnnounceSent(txnId, connectionId, _, n) = announce
+    sendAnnounce(infoHash, connectionId, txnId, tracker) match {
+      case Failure(exception) =>
+        logger.warn(
+          s"Sending Announce to '$tracker' for '$infoHash' within connection id '$connectionId' with txnId '$txnId'.",
+          exception
+        )
+        scheduleAnnounceResponseCheck(infoHash, tracker, txnId, retries(n))
+      case Success(_) =>
+        logger.info(
+          s"Sent Announce to '$tracker' for '$infoHash' within connection id '$connectionId' and txnId '$txnId'."
+        )
+        scheduleAnnounceResponseCheck(infoHash, tracker, txnId, retries(n))
+    }
+  }
+
+  private def scheduleAnnounceResponseCheck(
+      infoHash: InfoHash,
+      trackerSocket: InetSocketAddress,
+      txnId: Int,
+      delay: Int
+  ): Unit =
     scheduler.schedule(
-      new Runnable { def run(): Unit = checkAnnounceResponse(infoHash, txnId) },
-      15,
+      new Runnable { def run(): Unit = checkAnnounceResponse(infoHash, trackerSocket, txnId) },
+      delay,
       TimeUnit.SECONDS
     )
 
-  private def checkConnectResponse(infoHash: InfoHash, txnId: Int): Unit = {
-    val currentState = trackers.get()
+  @tailrec
+  private def checkConnectResponse(infoHash: InfoHash, tracker: InetSocketAddress, txnId: Int): Unit = {
+    val currentState = state.get()
     currentState.get(infoHash) match {
-      case Some(Tiers(previousTiers, CurrentTier((socket, ConnectSent(theTxnId, _)), nextOnTier), nextTiers))
-          if theTxnId == txnId =>
-        val untried = nextOnTier.collect { case (address, false) => address }
-        val channel = Promise[Unit]()
-        val newTxnId = txnIdGenerator.newTransactionId()
-        val newState = ConnectSent(newTxnId, channel)
-        ((untried, nextTiers) match {
-          case (Nil, Nil) => None
-          case (head :: rest, _) =>
-            val withHeadFiltered = nextOnTier.filterNot { case (a, _) => a == head }
-            val currentTier = CurrentTier((head, newState), (socket, true) +: withHeadFiltered)
-            Some(Tiers(previousTiers, currentTier, nextTiers))
-          case (Nil, Tier(trackers) :: rest) =>
-            val currentTier = Tier(NonEmptyList(socket, nextOnTier.map(_._1)))
-            val currentSocket = (trackers.head, newState)
-            val restNewCurrentTier = trackers.tail.map((_, false))
-            Some(Tiers(previousTiers :+ currentTier, CurrentTier(currentSocket, restNewCurrentTier), rest))
-        }) match {
-          case Some(newStateForHash) =>
-            val newState = currentState + (infoHash -> newStateForHash)
-            if (!trackers.compareAndSet(currentState, newState)) checkConnectResponse(infoHash, txnId)
+      case Some(tiers) =>
+        tiers.get(tracker) match {
+          case Some(ConnectSent(thisTxnId, _, n)) if thisTxnId == txnId =>
+            val connectSent = ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), n + 1)
+            val newState = currentState + (infoHash -> tiers.updateEntry(tracker, connectSent))
+            if (!state.compareAndSet(currentState, newState)) checkConnectResponse(infoHash, tracker, txnId)
             else {
-              val (trackerSocket, _) = newStateForHash.currentState
-              logger.warn(s"Connect response '$socket' for txnId '$txnId' not received. New tracker '$trackerSocket'.")
-
-              logger.info(s"Sending Connect to '$trackerSocket' with txnId '$newTxnId'.")
-              sendConnect(newTxnId, trackerSocket) match {
-                case Failure(exception) => // does this guarantee the tracker never received it?
-                  logger.warn(
-                    s"Sending Connect to '$trackerSocket' for '$infoHash' with txnId '$newTxnId'.",
-                    exception
-                  )
-                  checkConnectResponse(infoHash, newTxnId)
-                case Success(_) =>
-                  logger.info(s"Sent Connect to '$trackerSocket' for '$infoHash' with txnId '$newTxnId'.")
-                  doWhenConnectResponseReceived(channel, infoHash)
-                  scheduleConnectResponseCheck(infoHash, newTxnId)
-              }
+              logger.warn(s"Connect response from '$tracker' for '$infoHash' with txnId '$txnId' not received.")
+              sendConnect(infoHash, tracker, connectSent)
             }
-          case None => logger.warn("What the heck to do ??? Try them all again ?")
+          case Some(state) =>
+            logger.info(
+              s"Checking Connect response from '$tracker' for '$infoHash' and '$txnId', but state is now '$state'."
+            )
+          case None =>
+            logger.warn(
+              s"Checking Connect response from '$tracker' for '$infoHash' and '$txnId' but tracker nonexistent."
+            )
         }
-
-      case Some(Tiers(_, CurrentTier((socket, ConnectSent(theTxnId, _)), _), _)) if theTxnId != txnId =>
-        logger.warn(s"Connect response from '$socket' for txnId '$txnId' not received. Actual txnId is '$theTxnId'.")
-      case Some(Tiers(_, CurrentTier((so, s), _), _)) =>
-        logger.info(s"Checking Connect response from '$so' for '$infoHash' with txnId '$txnId'. State is '$s'.")
       case None =>
-        logger.warn(s"Checking Connect response for '$infoHash' and '$txnId' but torrent doesn't exist.")
+        logger.warn(s"Checking Connect response from '$tracker' for '$infoHash' and '$txnId' but info-hash nonexistent")
     }
   }
 
-  private def checkAnnounceResponse(infoHash: InfoHash, txnId: Int): Unit = {
-    val currentState = trackers.get()
-
+  @tailrec
+  private def checkAnnounceResponse(infoHash: InfoHash, tracker: InetSocketAddress, txnId: Int): Unit = {
+    val currentState = state.get()
+    val msgPrefix = s"Checking Announce response from '$tracker' for '$infoHash' with txnId '$txnId'."
     currentState.get(infoHash) match {
-      case Some(Tiers(previousTiers, CurrentTier((socket, AnnounceSent(theTxnId)), nextOnTier), nextTiers))
-          if theTxnId == txnId =>
-        val untried = nextOnTier.collect { case (address, false) => address }
-        val channel = Promise[Unit]()
-        val newTxnId = txnIdGenerator.newTransactionId()
-        val newState = ConnectSent(newTxnId, channel)
-        ((untried, nextTiers) match {
-          case (Nil, Nil) => None // what the heck to do
-          case (head :: rest, _) =>
-            val withHeadFiltered = nextOnTier.filterNot { case (a, _) => a == head }
-            val currentTier = CurrentTier((head, newState), (socket, true) +: withHeadFiltered)
-            Some(Tiers(previousTiers, currentTier, nextTiers))
-          case (Nil, Tier(trackers) :: rest) =>
-            val foo = Tier(NonEmptyList(socket, nextOnTier.map(_._1)))
-            val currentSocket = (trackers.head, newState)
-            val restCurrentTier = trackers.tail.map((_, false))
-            Some(Tiers(previousTiers :+ foo, CurrentTier(currentSocket, restCurrentTier), rest))
-        }) match {
-          case Some(newStateForHash) =>
-            val newState = currentState + ((infoHash, newStateForHash))
-            if (!trackers.compareAndSet(currentState, newState)) checkConnectResponse(infoHash, txnId)
-            else {
-              val (trackerSocket, _) = newStateForHash.currentState
-              logger.warn(
-                s"Announce response from '$socket' for txnId '$txnId' not received. New tracker '$trackerSocket'."
-              )
-
-              logger.info(s"Sending Connect to '$trackerSocket'.")
-              sendConnect(newTxnId, trackerSocket) match {
-                case Failure(exception) => // does this guarantee the tracker never received it?
-                  logger.warn(
-                    s"Sending Connect to '$trackerSocket' for '$infoHash' with transaction id '$newTxnId'.",
-                    exception
-                  )
-                  checkConnectResponse(infoHash, newTxnId)
-                case Success(_) =>
-                  logger.info(s"Sent Connect to '$socket' for '$infoHash' with transaction id '$newTxnId'")
-                  doWhenConnectResponseReceived(channel, infoHash)
-                  scheduleConnectResponseCheck(infoHash, newTxnId)
+      case Some(tiers) =>
+        tiers.get(tracker) match {
+          case Some(announce @ AnnounceSent(thisTxnId, connectionId, timestampConnectionId, n)) if thisTxnId == txnId =>
+            val newTxnId = txnIdGenerator.newTransactionId()
+            if (limitConnectionId(timestampConnectionId)) {
+              val connectSent = ConnectSent(newTxnId, Promise[Unit](), 0)
+              val newState = currentState + (infoHash -> tiers.updateEntry(tracker, connectSent))
+              if (!state.compareAndSet(currentState, newState)) checkAnnounceResponse(infoHash, tracker, txnId)
+              else {
+                logger.info(
+                  s"$msgPrefix. Not received. Sending Connect with txnId '$newTxnId' as connectionId '$connectionId' is stale."
+                )
+                sendConnect(infoHash, tracker, connectSent)
+              }
+            } else {
+              val announceSent = announce.copy(txnId = txnIdGenerator.newTransactionId(), n = n + 1)
+              val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announceSent))
+              if (!state.compareAndSet(currentState, newState)) checkAnnounceResponse(infoHash, tracker, txnId)
+              else {
+                logger.info(
+                  s"No Announce response from '$tracker' for '$infoHash' with txnId '$txnId'. Sending Announce with txnId '$newTxnId' and re-using connectionId '$connectionId'."
+                )
+                sendAnnounc(infoHash, announceSent, tracker)
               }
             }
-          case None => logger.warn("What the heck to do ??? Try them all again ?. Check announce.")
+          case Some(state) => logger.info(s"$msgPrefix but state is now '$state'.")
+          case None => logger.warn(s"$msgPrefix but tracker not registered.")
         }
-
-      case Some(Tiers(_, CurrentTier((socket, AnnounceSent(theTxnId)), _), _)) if theTxnId == txnId =>
-        logger.warn(
-          s"Checking Announce response from '$socket' for txnId '$txnId': Status is now 'AnnounceSent' with different txnID. Very weird. Expected txnID: '$txnId'; actual: '$theTxnId'"
-        )
-      case Some(Tiers(_, CurrentTier((so, s), _), _)) =>
-        logger.info(s"Checking Announce response from '$so' for '$infoHash' with txnId '$txnId'. State is '$s'.")
-      case None =>
-        logger.warn(s"Checking Announce response for '$infoHash' and '$txnId' but torrent doesn't exist.")
+      case None => logger.warn(s"$msgPrefix but infoHash nonexistent.")
     }
   }
 
   override def peers(infoHash: InfoHash): List[InetSocketAddress] =
-    trackers.get().get(infoHash) match {
-      case Some(Tiers(_, CurrentTier((_, AnnounceReceived(_, _, peers)), _), _)) => peers
+    state.get().get(infoHash) match {
+      case Some(tiers) =>
+        tiers.toList.flatMap {
+          case (socket, AnnounceReceived(_, _, peers)) => peers
+          case _ => Nil
+        }.distinct
       case _ => List.empty
     }
 }
@@ -261,6 +227,10 @@ private[tracker] class TrackerImpl private (
 object TrackerImpl {
 
   case class Config(port: Int, peerId: PeerId, key: Int)
+
+  private val retries: Int => Int = n => 15 * (2 ^ n)
+
+  private val limitConnectionId: Long => Boolean = timestamp => (System.nanoTime() - timestamp) / 1000000000L > 60
 
   def apply(
       mainExecutor: ExecutionContext,
@@ -270,7 +240,7 @@ object TrackerImpl {
   ): TrackerImpl =
     new TrackerImpl(
       new DatagramSocket(config.port),
-      new AtomicReference[Map[InfoHash, Tiers]](Map.empty),
+      new AtomicReference[Map[InfoHash, Tiers[State]]](Map.empty),
       mainExecutor,
       scheduler,
       config,

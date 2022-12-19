@@ -1,15 +1,17 @@
 package com.cmhteixeira.bittorrent
 
+import cats.Show
 import cats.implicits.{catsSyntaxTuple2Semigroupal, toTraverseOps}
 import com.cmhteixeira.bencode._
 import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl}
 import com.cmhteixeira.cmhtorrent.Torrent
 import org.slf4j.LoggerFactory
 
+import java.nio.ByteBuffer
 import scala.collection.JavaConverters._
 import java.nio.file.{Files, Paths}
 import java.security.SecureRandom
-import java.util.concurrent.Executors
+import java.util.concurrent.{Executors, TimeUnit}
 import scala.concurrent.ExecutionContext.global
 
 object Tests extends App {
@@ -48,6 +50,10 @@ object Tests extends App {
     case Right(value) => value
   }
 
+  allTorrents.map { case (bencode, _) => InfoHash(bencode) }
+
+  logger.info(Show[Torrent].show(allTorrents.tail.tail.head._2))
+
   val key = 234
 
   val scheduler = Executors.newSingleThreadScheduledExecutor()
@@ -59,6 +65,8 @@ object Tests extends App {
     TrackerImpl.Config(8083, peerId, 123)
   )
 
+  logger.info("Tracker created ...")
+
   val all = allTorrents.traverse {
     case (bencode, thisTorrent) =>
       com.cmhteixeira.bittorrent.tracker
@@ -68,9 +76,25 @@ object Tests extends App {
     case Left(value) => throw new Exception(s"Some error: $value")
     case Right(value) => value
   }
-
+  logger.info("Foo Bar ...")
   all.foreach {
-    case (a, b, c) =>
+    case (_, _, c) =>
       tracker.submit(c)
   }
+
+  scheduler.scheduleAtFixedRate(
+    new Runnable {
+
+      def run(): Unit =
+        all.foreach {
+          case (a, b, c) =>
+            val peers = tracker.peers(c.infoHash)
+            logger.info(s"There are ${peers.size} distinct peers for '${c.infoHash}': [${peers.mkString("")}]")
+        }
+    },
+    15,
+    15,
+    TimeUnit.SECONDS
+  )
+
 }
