@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
 import com.cmhteixeira.bittorrent.InfoHash
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Config
 import com.cmhteixeira.bittorrent.peerprotocol.State.{Begin, HandshakeError, TcpConnected}
 import org.slf4j.{Logger, LoggerFactory, MDC}
 import sun.nio.cs.US_ASCII
@@ -16,7 +17,7 @@ import scala.util.{Failure, Success, Try}
 private[peerprotocol] final class PeerImpl private (
     socket: Socket,
     peerSocket: SocketAddress,
-    config: Peer.Config,
+    config: Config,
     infoHash: InfoHash,
     state: AtomicReference[State],
     mainExecutor: ExecutionContext,
@@ -93,9 +94,6 @@ private[peerprotocol] final class PeerImpl private (
 
   }
 
-  private def toEither[A, B](f: => A, error: Throwable => B): Either[B, A] =
-    Try(f).toEither.left.map(error)
-
   private def createHandShake(connected: TcpConnected): Either[HandshakeError, Array[Byte]] =
     Try {
       val handShake = ByteBuffer.allocate(68)
@@ -118,11 +116,12 @@ private[peerprotocol] final class PeerImpl private (
 }
 
 object PeerImpl {
+  case class Config(tcpConnectTimeoutMillis: Int, myPeerId: String)
   private val protocol: String = "BitTorrent protocol"
 
   def apply(
       peerSocket: InetSocketAddress,
-      config: Peer.Config,
+      config: Config,
       infoHash: InfoHash,
       mainExecutor: ExecutionContext,
       scheduledExecutorService: ScheduledExecutorService,

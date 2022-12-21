@@ -12,7 +12,4 @@ trait Peer {
   def peerAddress: SocketAddress
 }
 
-object Peer {
-
-  case class Config(tcpConnectTimeoutMillis: Int, myPeerId: String)
-}
+object Peer

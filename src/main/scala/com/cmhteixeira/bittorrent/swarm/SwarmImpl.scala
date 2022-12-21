@@ -20,7 +20,7 @@ private[bittorrent] class SwarmImpl private (
     tracker: Tracker,
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
-    peerConfig: Peer.Config
+    peerConfig: PeerImpl.Config
 ) extends Swarm {
   private val logger = LoggerFactory.getLogger(getClass)
   MDC.put("<which key should it be>", torrent.infoHash.toString)

@@ -7,7 +7,6 @@ import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, Tracker
 import com.cmhteixeira.cmhtorrent.Torrent
 import org.slf4j.LoggerFactory
 
-import java.nio.ByteBuffer
 import scala.collection.JavaConverters._
 import java.nio.file.{Files, Paths}
 import java.security.SecureRandom
