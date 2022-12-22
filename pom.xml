@@ -54,7 +54,11 @@
       <artifactId>commons-codec</artifactId>
       <version>1.15</version>
     </dependency>
-
+    <dependency>
+      <groupId>org.scodec</groupId>
+      <artifactId>scodec-bits_2.12</artifactId>
+      <version>1.1.22</version>
+    </dependency>
 
     <!-- Test -->
     <dependency>

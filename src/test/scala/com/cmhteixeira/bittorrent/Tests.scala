@@ -3,18 +3,22 @@ package com.cmhteixeira.bittorrent
 import cats.Show
 import cats.implicits.{catsSyntaxTuple2Semigroupal, toTraverseOps}
 import com.cmhteixeira.bencode._
+import com.cmhteixeira.bittorrent.peerprotocol.{PeerFactoryImpl, PeerImpl}
+import com.cmhteixeira.bittorrent.swarm.SwarmImpl
 import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl}
-import com.cmhteixeira.cmhtorrent.Torrent
+import com.cmhteixeira.cmhtorrent.{MultiFile, SingleFile, Torrent}
 import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
 import java.nio.file.{Files, Paths}
 import java.security.SecureRandom
-import java.util.concurrent.{Executors, TimeUnit}
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
 import scala.concurrent.ExecutionContext.global
 
 object Tests extends App {
-  val logger = LoggerFactory.getLogger(getClass.getPackageName + ".Runner")
+
+  val logger = LoggerFactory.getLogger("Runner")
   val peerId = PeerId("cmh-4234567891011121").getOrElse(throw new IllegalArgumentException("Peer id is bad."))
 
   val dirWithTorrents = Paths.get(args(0))
@@ -49,51 +53,49 @@ object Tests extends App {
     case Right(value) => value
   }
 
-  allTorrents.map { case (bencode, _) => InfoHash(bencode) }
-
-  logger.info(Show[Torrent].show(allTorrents.tail.tail.head._2))
+  logger.info(Show[Torrent].show(allTorrents.tail.head._2))
 
   val key = 234
 
-  val scheduler = Executors.newSingleThreadScheduledExecutor()
+  def scheduler(prefix: String, numThreads: Int): ScheduledExecutorService =
+    Executors.newScheduledThreadPool(
+      numThreads,
+      new ThreadFactory {
+        val counter = new AtomicLong(0)
+
+        def newThread(r: Runnable): Thread = {
+          val thread = new Thread(r, s"$prefix-${counter.getAndIncrement()}")
+          thread.setDaemon(false)
+          thread
+        }
+      }
+    )
 
   val tracker = TrackerImpl(
     global,
-    scheduler,
+    scheduler("tracker", 10),
     RandomTransactionIdGenerator(SecureRandom.getInstanceStrong),
     TrackerImpl.Config(8083, peerId, 123)
   )
 
   logger.info("Tracker created ...")
 
-  val all = allTorrents.traverse {
+  val all = allTorrents.slice(1, 2).traverse {
     case (bencode, thisTorrent) =>
-      com.cmhteixeira.bittorrent.tracker
+      com.cmhteixeira.bittorrent.swarm
         .Torrent(InfoHash(bencode), thisTorrent)
-        .map(trackerTorrent => (bencode, thisTorrent, trackerTorrent))
+        .map(swarmTorrent => (bencode, thisTorrent, swarmTorrent))
   } match {
     case Left(value) => throw new Exception(s"Some error: $value")
     case Right(value) => value
   }
-  logger.info("Foo Bar ...")
-  all.foreach {
-    case (_, _, c) =>
-      tracker.submit(c)
-  }
 
-  scheduler.scheduleAtFixedRate(
-    new Runnable {
+  val (_, torrent, swarmTorrent) = all.head
+  val downloadDir = Paths.get("/home/cmhteixeira/Projects/cmhTorrent/src/test/scala/com/cmhteixeira")
 
-      def run(): Unit =
-        all.foreach {
-          case (a, b, c) =>
-            val peers = tracker.peers(c.infoHash)
-            logger.info(s"There are ${peers.size} distinct peers for '${c.infoHash}': [${peers.mkString("")}]")
-        }
-    },
-    15,
-    15,
-    TimeUnit.SECONDS
-  )
+  val peerFactory = PeerFactoryImpl(PeerImpl.Config(1000, peerId, downloadDir), global, scheduler("peers", 10))
+
+  val swarm =
+    SwarmImpl(tracker, global, scheduler("swarm", 10), peerFactory, swarmTorrent)
 
 }

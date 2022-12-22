@@ -7,15 +7,18 @@ import scala.concurrent.Promise
 
 package object tracker {
 
-  private[tracker] case class Tiers[+A <: State](underlying: NonEmptyList[NonEmptyList[(InetSocketAddress, A)]])
-      extends AnyVal {
-    def toList: List[(InetSocketAddress, A)] = underlying.toList.flatMap(_.toList)
+  private[tracker] sealed trait Foo
+
+  private[tracker] case object Submitted extends Foo
+
+  private[tracker] case class Tiers[+A <: State](underlying: NonEmptyList[(InetSocketAddress, A)]) extends Foo {
+    def toList: List[(InetSocketAddress, A)] = underlying.toList
 
     def updateEntry(tracker: InetSocketAddress, newState: State): Tiers[State] =
-      Tiers(underlying.map(_.map {
+      Tiers(underlying.map {
         case (trackerSocket, _) if trackerSocket == tracker => (trackerSocket, newState)
         case pair => pair
-      }))
+      })
 
     def get(trackerSocket: InetSocketAddress): Option[A] = toList.find { case (a, _) => a == trackerSocket }.map(_._2)
 
@@ -43,18 +46,18 @@ package object tracker {
 
   private[tracker] object Tiers {
 
-    def start(txnIdGenerator: TransactionIdGenerator, torrent: Torrent): Tiers[ConnectSent] =
-      Tiers(
-        torrent.announceList.fold(
-          NonEmptyList.one(
-            NonEmptyList.one(torrent.announce -> ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), 0))
-          )
-        )(announceList =>
-          announceList.map(
-            _.map(trackerSocket => trackerSocket -> ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), 0))
-          )
+    def start(
+        txnIdGenerator: TransactionIdGenerator,
+        torrent: Torrent
+    ): NonEmptyList[(UdpSocket, ConnectSent)] =
+      torrent.announceList.fold(
+        NonEmptyList.one(torrent.announce -> ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), 0))
+      )(announceList =>
+        announceList.flatMap(
+          _.map(trackerSocket => trackerSocket -> ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), 0))
         )
       )
+
   }
 
   private[tracker] sealed trait State

@@ -4,21 +4,19 @@ import com.cmhteixeira.bencode.Bencode
 import org.apache.commons.codec.binary.Hex
 import sun.nio.cs.UTF_8
 
+import java.net.URI
 import java.security.MessageDigest
 import java.util
 
 package object bittorrent {
 
-  sealed trait PeerId {
-    val underlying: String
-  }
+  case class PeerId(underlying: String)
 
   object PeerId {
-    private case class PeerIdImpl(underlying: String) extends PeerId
 
-    def apply(peerId: String): Option[PeerId] =
-      if (peerId.getBytes(new UTF_8).length != 20) None
-      else Some(PeerIdImpl(peerId))
+    def apply(underlying: String): Option[PeerId] =
+      if (underlying.getBytes(new UTF_8).length != 20) None
+      else Some(new PeerId(underlying))
   }
 
   sealed trait InfoHash {
@@ -50,5 +48,21 @@ package object bittorrent {
           override val hex: String = Hex.encodeHexString(theBytes)
           override val bytes: Array[Byte] = util.Arrays.copyOf(theBytes, theBytes.length)
         })
+  }
+
+  /** Unresolved tracker socket.
+    *
+    * @param hostName
+    * @param port
+    */
+  case class UdpSocket(hostName: String, port: Int)
+
+  private[bittorrent] def parseToUdpSocketAddress(a: String): Either[String, UdpSocket] = {
+    val url = new URI(a)
+    (url.getScheme, url.getHost, url.getPort, url.getPath) match {
+      case (_, host, port, _) if port > 0 & port <= Char.MaxValue => Right(UdpSocket(host, port))
+      case (_, host, port, _) => Left(s"Port is '$port'. Host is $host.")
+      case _ => Left("Some other error.")
+    }
   }
 }

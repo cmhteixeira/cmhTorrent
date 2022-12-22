@@ -1,22 +1,27 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import com.cmhteixeira.bittorrent.InfoHash
+import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket, parseToUdpSocketAddress}
 import cats.implicits.{catsSyntaxTuple3Semigroupal, toTraverseOps}
 import com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.cmhtorrent.PieceHash
-
-import java.net.{InetSocketAddress, URI}
+import com.cmhteixeira.bittorrent.tracker.{Torrent => TrackerTorrent}
 
 case class Torrent(
     infoHash: InfoHash,
     info: Torrent.Info,
-    announce: InetSocketAddress,
-    announceList: Option[NonEmptyList[NonEmptyList[InetSocketAddress]]]
-)
+    announce: UdpSocket,
+    announceList: Option[NonEmptyList[NonEmptyList[UdpSocket]]]
+) {
+  def toTrackerTorrent: TrackerTorrent = TrackerTorrent(infoHash, announce, announceList)
+}
 
 object Torrent {
-  sealed trait Info
+
+  sealed trait Info {
+    def pieceLength: Long
+    def pieces: NonEmptyList[PieceHash]
+  }
 
   case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: NonEmptyList[PieceHash]) extends Info
 
@@ -57,16 +62,6 @@ object Torrent {
 
     def apply(file: com.cmhteixeira.cmhtorrent.File): Option[File] =
       NonEmptyList.fromList(file.path).map(path => File(file.length, path))
-  }
-
-  //todo: Rethink. There is better way.
-  private def parseToUdpSocketAddress(a: String): Either[String, InetSocketAddress] = {
-    val url = new URI(a)
-    (url.getScheme, url.getHost, url.getPort, url.getPath) match {
-      case (_, host, port, _) if port > 0 & port <= Char.MaxValue => Right(new InetSocketAddress(host, port))
-      case (_, host, port, _) => Left(s"Port is '$port'. Host is $host.")
-      case _ => Left("Some other error.")
-    }
   }
 
   //todo: Rethink. There is better way.

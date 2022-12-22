@@ -12,9 +12,9 @@ import scala.util.{Failure, Success, Try}
 
 private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
-    state: AtomicReference[Map[InfoHash, Tiers[State]]]
+    state: AtomicReference[Map[InfoHash, Foo]]
 ) extends Runnable {
-  private val logger = LoggerFactory.getLogger(getClass)
+  private val logger = LoggerFactory.getLogger("TrackerReader")
 
   override def run(): Unit = {
     val packet = new DatagramPacket(ByteBuffer.allocate(maximumUdpPacketSize).array(), maximumUdpPacketSize)
@@ -62,7 +62,8 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
     currentState.flatMap {
-      case (infoHash, tiers) => tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
+      case (infoHash, tiers @ Tiers(_)) => tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
+      case (_, Submitted) => List.empty
     }.toList match {
       case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
@@ -86,7 +87,9 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val AnnounceResponse(_, _, _, leechers, seeders, peers) = announceResponse
     currentState.flatMap {
-      case (infoHash, tiers) => tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
+      case (infoHash, tiers @ Tiers(_)) =>
+        tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
+      case (_, Submitted) => List.empty
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
@@ -106,6 +109,6 @@ private[tracker] object ReaderThread {
 
   def apply(
       socket: DatagramSocket,
-      state: AtomicReference[Map[InfoHash, Tiers[State]]]
+      state: AtomicReference[Map[InfoHash, Foo]]
   ): ReaderThread = new ReaderThread(socket, state)
 }

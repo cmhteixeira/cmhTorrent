@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.tracker
 
-import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
+import cats.data.NonEmptyList
+import com.cmhteixeira.bittorrent.{InfoHash, PeerId, UdpSocket}
 import com.cmhteixeira.bittorrent.tracker.TrackerImpl.{Config, limitConnectionId, retries}
 import org.slf4j.LoggerFactory
 
@@ -13,25 +14,66 @@ import scala.util.{Failure, Success, Try}
 
 private[tracker] final class TrackerImpl private (
     socket: DatagramSocket,
-    state: AtomicReference[Map[InfoHash, Tiers[State]]],
+    state: AtomicReference[Map[InfoHash, Foo]],
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
     config: Config,
     txnIdGenerator: TransactionIdGenerator
 ) extends Tracker {
-  private val logger = LoggerFactory.getLogger(getClass)
+  private val logger = LoggerFactory.getLogger("TrackerImpl")
   mainExecutor.execute(ReaderThread(socket, state))
 
-  @tailrec
   def submit(torrent: Torrent): Unit = {
     val currentState = state.get()
     if (currentState.exists { case (hash, _) => hash == torrent.infoHash }) ()
     else {
-      val entry = Tiers.start(txnIdGenerator, torrent)
-      if (!state.compareAndSet(currentState, currentState + (torrent.infoHash -> entry))) submit(torrent)
-      else entry.toList.foreach { case (socket, state) => sendConnect(torrent.infoHash, socket, state) }
+      if (!state.compareAndSet(currentState, currentState + (torrent.infoHash -> Submitted))) submit(torrent)
+      else {
+        logger.info(s"Submitted torrent '${torrent.infoHash}'")
+        val entry = Tiers.start(txnIdGenerator, torrent)
+        entry.toList.foreach {
+          case (udpSocket, connectSent) =>
+            scheduler.submit(addTracker(torrent.infoHash, udpSocket, connectSent))
+        }
+      }
     }
   }
+
+  private def addTracker(
+      infoHash: InfoHash,
+      trackerSocket: UdpSocket,
+      connectSent: ConnectSent
+  ): Runnable =
+    new Runnable {
+
+      @tailrec
+      def monkey(trackerSocket: InetSocketAddress): Unit = {
+        val currentState = state.get()
+        currentState.get(infoHash) match {
+          case Some(Submitted) =>
+            val newState = currentState + (infoHash -> Tiers(NonEmptyList.one(trackerSocket -> connectSent)))
+            if (!state.compareAndSet(currentState, newState)) monkey(trackerSocket)
+            else {
+              logger.info(s"Added tracker '$trackerSocket'.")
+              sendConnect(infoHash, trackerSocket, connectSent)
+            }
+          case Some(Tiers(underlying)) =>
+            val newState = currentState + (infoHash -> Tiers(underlying :+ (trackerSocket -> connectSent)))
+            if (!state.compareAndSet(currentState, newState)) monkey(trackerSocket)
+            else {
+              logger.info(s"Added tracker '$trackerSocket'.")
+              sendConnect(infoHash, trackerSocket, connectSent)
+            }
+          case None => logger.warn("Weird....")
+        }
+      }
+
+      def run(): Unit =
+        Try(new InetSocketAddress(trackerSocket.hostName, trackerSocket.port)) match {
+          case Failure(exception) => logger.warn(s"Failed to add tracker '$trackerSocket'.", exception)
+          case Success(inetSocketAddress) => monkey(inetSocketAddress)
+        }
+    }
 
   private def sendConnect(transactionId: Int, trackerSocket: InetSocketAddress): Try[Unit] = {
     val payload = ConnectRequest(transactionId).serialize
@@ -105,7 +147,8 @@ private[tracker] final class TrackerImpl private (
   private def sendAnnounce(infoHash: InfoHash, tracker: InetSocketAddress): Unit = {
     val currentState = state.get()
     currentState.get(infoHash) match {
-      case Some(tiers) =>
+      case Some(Submitted) => logger.warn("Can't send announce.")
+      case Some(tiers @ Tiers(_)) =>
         tiers.get(tracker) match {
           case Some(ConnectReceived(conId, timestamp)) =>
             val announce = AnnounceSent(txnIdGenerator.newTransactionId(), conId, timestamp, 0)
@@ -152,7 +195,8 @@ private[tracker] final class TrackerImpl private (
   private def checkConnectResponse(infoHash: InfoHash, tracker: InetSocketAddress, txnId: Int): Unit = {
     val currentState = state.get()
     currentState.get(infoHash) match {
-      case Some(tiers) =>
+      case Some(Submitted) => logger.warn("This is impossible?")
+      case Some(tiers @ Tiers(underlying)) =>
         tiers.get(tracker) match {
           case Some(ConnectSent(thisTxnId, _, n)) if thisTxnId == txnId =>
             val connectSent = ConnectSent(txnIdGenerator.newTransactionId(), Promise[Unit](), n + 1)
@@ -181,7 +225,8 @@ private[tracker] final class TrackerImpl private (
     val currentState = state.get()
     val msgPrefix = s"Checking Announce response from '$tracker' for '$infoHash' with txnId '$txnId'."
     currentState.get(infoHash) match {
-      case Some(tiers) =>
+      case Some(Submitted) => logger.warn("This is impossible?")
+      case Some(tiers @ Tiers(underlying)) =>
         tiers.get(tracker) match {
           case Some(announce @ AnnounceSent(thisTxnId, connectionId, timestampConnectionId, n)) if thisTxnId == txnId =>
             val newTxnId = txnIdGenerator.newTransactionId()
@@ -215,7 +260,8 @@ private[tracker] final class TrackerImpl private (
 
   override def peers(infoHash: InfoHash): List[InetSocketAddress] =
     state.get().get(infoHash) match {
-      case Some(tiers) =>
+      case Some(Submitted) => List.empty
+      case Some(tiers @ Tiers(underlying)) =>
         tiers.toList.flatMap {
           case (socket, AnnounceReceived(_, _, peers)) => peers
           case _ => Nil
@@ -240,7 +286,7 @@ object TrackerImpl {
   ): TrackerImpl =
     new TrackerImpl(
       new DatagramSocket(config.port),
-      new AtomicReference[Map[InfoHash, Tiers[State]]](Map.empty),
+      new AtomicReference[Map[InfoHash, Foo]](Map.empty),
       mainExecutor,
       scheduler,
       config,

@@ -2,27 +2,15 @@ package com.cmhteixeira.bittorrent.tracker
 
 import cats.data.NonEmptyList
 import cats.implicits.catsSyntaxTuple2Semigroupal
-import com.cmhteixeira.bittorrent.InfoHash
-
-import java.net.{InetSocketAddress, URI}
+import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket, parseToUdpSocketAddress}
 
 case class Torrent(
     infoHash: InfoHash,
-    announce: InetSocketAddress,
-    announceList: Option[NonEmptyList[NonEmptyList[InetSocketAddress]]]
+    announce: UdpSocket,
+    announceList: Option[NonEmptyList[NonEmptyList[UdpSocket]]]
 )
 
 object Torrent {
-
-  //todo: Rethink. There is better way.
-  private def parseToUdpSocketAddress(a: String): Either[String, InetSocketAddress] = {
-    val url = new URI(a)
-    (url.getScheme, url.getHost, url.getPort, url.getPath) match {
-      case (_, host, port, _) if port > 0 & port <= Char.MaxValue => Right(new InetSocketAddress(host, port))
-      case (_, host, port, _) => Left(s"Port is '$port'. Host is $host.")
-      case _ => Left("Some other error.")
-    }
-  }
 
   //todo: Rethink. There is better way.
   def apply(infoHash: InfoHash, torrent: com.cmhteixeira.cmhtorrent.Torrent): Either[String, Torrent] = {
