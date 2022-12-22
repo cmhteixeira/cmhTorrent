@@ -67,11 +67,11 @@ private[peerprotocol] final class PeerImpl private (
         MDC.put("peer-socket", peerSocket.toString)
         try {
           state.get() match {
-            case _: Begin =>
+            case _ @Begin =>
               logger.info("Sending handshake, but not yet connected. Retrying later.")
               Thread.sleep(100)
               run()
-            case connected: State.TcpConnected =>
+            case connected @ State.TcpConnected =>
               createHandShake(connected) match {
                 case Left(value) =>
                   logger.info("Error creating handshake.")
@@ -94,7 +94,7 @@ private[peerprotocol] final class PeerImpl private (
 
   }
 
-  private def createHandShake(connected: TcpConnected): Either[HandshakeError, Array[Byte]] =
+  private def createHandShake(connected: TcpConnected.type): Either[HandshakeError, Array[Byte]] =
     Try {
       val handShake = ByteBuffer.allocate(68)
       handShake.put(19: Byte)

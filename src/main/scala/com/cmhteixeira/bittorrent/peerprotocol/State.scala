@@ -4,15 +4,15 @@ import java.io.Serializable
 
 private[peerprotocol] sealed trait State extends Product with Serializable
 
-object State {
+private[peerprotocol] object State {
 
-  def begin: Begin = BeginImpl
+  def begin = Begin
 
-  sealed trait TcpConnected extends State {
-    def handshakeError(msg: String): HandshakeError = HandshakeErrorImpl(msg)
+  case object TcpConnected extends State {
+    def handshakeError(msg: String): HandshakeError = HandshakeError(msg)
 
     def handShaked(reservedBytes: Long, peerId: String, protocol: String): Handshaked =
-      HandshakedImpl(
+      Handshaked(
         reservedBytes,
         peerId,
         protocol,
@@ -22,91 +22,46 @@ object State {
       )
   }
 
-  private case object TcpConnectedImpl extends TcpConnected
+  case object Begin extends State {
+    def connectedError(msg: String): HandshakeError = HandshakeError(msg)
 
-  sealed trait Begin extends State {
-    def connectedError(msg: String): HandshakeError = HandshakeErrorImpl(msg)
-
-    def connected: TcpConnected = TcpConnectedImpl
+    def connected = TcpConnected
   }
 
-  private case object BeginImpl extends Begin
+  case class HandshakeError(msg: String) extends State
 
-  sealed trait HandshakeError extends State {
-    def msg: String
-  }
-
-  sealed trait TerminalError extends State {
-    def reservedBytes: Long
-    def peerId: String
-    def protocol: String
-    def me: ConnectionState
-    def peer: ConnectionState
-
-    def msg: String
-  }
-  private case class HandshakeErrorImpl(msg: String) extends HandshakeError
-
-  private case class TerminalErrorImpl(
+  case class TerminalError(
       reservedBytes: Long,
       peerId: String,
       protocol: String,
       me: ConnectionState,
       peer: ConnectionState,
       msg: String
-  ) extends TerminalError
+  ) extends State
 
-  sealed trait Handshaked extends State {
-    def reservedBytes: Long
-    def peerId: String
-    def protocol: String
-    def me: ConnectionState
-    def peer: ConnectionState
-    def error(msg: String): TerminalError = TerminalErrorImpl(reservedBytes, peerId, protocol, me, peer, msg)
-
-    def peerPieces: List[(String, Boolean)]
-
-    def chokeMe: Handshaked
-    def chokePeer: Handshaked
-
-    def unShokeMe: Handshaked
-
-    def unShokePeer: Handshaked
-
-    def meInterested: Handshaked
-
-    def meNotIntested: Handshaked
-    def peerInterested: Handshaked
-
-    def peerNotInterested: Handshaked
-
-    def peerPieces(peerPieces: List[(String, Boolean)]): Handshaked
-
-    def addPeerPiece(index: Int): Handshaked
-  }
-
-  private case class HandshakedImpl(
+  case class Handshaked(
       reservedBytes: Long,
       peerId: String,
       protocol: String,
       me: ConnectionState,
       peer: ConnectionState,
       peerPieces: List[(String, Boolean)]
-  ) extends Handshaked {
-    override def chokeMe: Handshaked = copy(me = me.choke)
-    override def chokePeer: Handshaked = copy(peer = peer.choke)
-    override def unShokeMe: Handshaked = copy(me = me.unChoke)
-    override def unShokePeer: Handshaked = copy(peer = peer.unChoke)
-    override def meInterested: Handshaked = copy(me = me.interested)
-    override def peerInterested: Handshaked = copy(peer = peer.interested)
-    override def meNotIntested: Handshaked = copy(me = me.notInterested)
-    override def peerNotInterested: Handshaked = copy(peer = peer.notInterested)
+  ) extends State {
+    def chokeMe: Handshaked = copy(me = me.choke)
+    def chokePeer: Handshaked = copy(peer = peer.choke)
+    def unShokeMe: Handshaked = copy(me = me.unChoke)
+    def unShokePeer: Handshaked = copy(peer = peer.unChoke)
+    def meInterested: Handshaked = copy(me = me.interested)
+    def peerInterested: Handshaked = copy(peer = peer.interested)
+    def meNotIntested: Handshaked = copy(me = me.notInterested)
+    def peerNotInterested: Handshaked = copy(peer = peer.notInterested)
+    def error(msg: String): TerminalError = TerminalError(reservedBytes, peerId, protocol, me, peer, msg)
 
-    override def peerPieces(
+    def peerPieces(
         peerPieces: List[(String, Boolean)]
     ): Handshaked = copy(peerPieces = peerPieces)
 
-    override def addPeerPiece(index: Int): Handshaked = {
+    def addPeerPiece(index: Int): Handshaked = {
       val newPieces = peerPieces.zipWithIndex.map {
         case ((hash, set), i) if i == index => (hash, true)
         case (pair, _) => pair

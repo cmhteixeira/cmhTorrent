@@ -2,7 +2,6 @@ package com.cmhteixeira.bittorrent.peerprotocol
 
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.State._
-import com.cmhteixeira.cmhtorrent.PieceHash
 import org.apache.commons.codec.binary.Hex
 import org.slf4j.{Logger, LoggerFactory, MDC}
 import sun.nio.cs.UTF_8
@@ -27,11 +26,11 @@ private[peerprotocol] class ReadThread private (
   override final def run(): Unit = {
     MDC.put("peer-socket", peerAddress.toString)
     state.get() match {
-      case begin: Begin =>
+      case begin @ Begin =>
         logger.info("Not yet connected.")
         Thread.sleep(100)
         run()
-      case tcpConnected: TcpConnected =>
+      case tcpConnected @ TcpConnected =>
         receiveHandshake(tcpConnected, socket.getInputStream)
         run()
       case handshaked: Handshaked =>
@@ -52,7 +51,7 @@ private[peerprotocol] class ReadThread private (
   private def setError(msg: String): Unit = {
     val currentState = state.get()
     val newState = currentState match {
-      case begin: Begin => begin.connectedError(msg)
+      case begin @ Begin => begin.connectedError(msg)
       case error: HandshakeError => error
       case error: TerminalError => error
       case handshaked: Handshaked => handshaked.error(msg)
@@ -201,7 +200,7 @@ private[peerprotocol] class ReadThread private (
   private def msgTypeNotRecognized(msgType: Int): Unit = {
     logger.info(s"Received message of type $msgType, which is not recognized.")
     state.get() match {
-      case begin: Begin =>
+      case begin @ Begin =>
         logger.warn("Should be impossible")
 
       case error: HandshakeError =>
@@ -232,7 +231,7 @@ private[peerprotocol] class ReadThread private (
     }
   }
 
-  private def receiveHandshake(begin: TcpConnected, input: InputStream): Unit = {
+  private def receiveHandshake(begin: TcpConnected.type, input: InputStream): Unit = {
     (for {
       protocolLength <- toEither(input.read(), err => begin.handshakeError("Error extracting protocol length"))
       protocolLengthValid <-
