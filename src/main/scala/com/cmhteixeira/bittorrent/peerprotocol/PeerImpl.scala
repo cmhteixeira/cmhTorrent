@@ -49,10 +49,10 @@ private[peerprotocol] final class PeerImpl private (
     new Runnable {
 
       def run(): Unit = {
-        MDC.put("peer-socket", peerSocket.toString)
+        MDC.put("context", peerSocket.toString)
         Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
-          case Failure(exception) => logger.warn(s"Failed to send keep alive message.", exception)
-          case Success(_) => logger.info(s"Keep alive message sent.")
+          case Failure(exception) => logger.warn(s"Failed to send keep alive message to '$peerSocket'.", exception)
+          case Success(_) => logger.info(s"Keep alive message sent to '$peerSocket'.")
         }
       }
     }
@@ -61,7 +61,6 @@ private[peerprotocol] final class PeerImpl private (
     new Runnable {
 
       override def run(): Unit = {
-        MDC.put("peer-socket", peerSocket.toString)
         try {
           socket.connect(peerSocket, config.tcpConnectTimeoutMillis)
           state.set(State.begin.connected)
@@ -72,10 +71,10 @@ private[peerprotocol] final class PeerImpl private (
           )
         } catch {
           case error: SocketTimeoutException =>
-            logger.warn(s"TCP connection timeout.")
+            logger.warn(s"TCP connection timeout to '$peerSocket'.")
             setError(TcpConnection(error))
           case otherError: Throwable =>
-            logger.warn(s"TCP connection error. Not connection timeout.", otherError)
+            logger.warn(s"TCP connection error '$peerSocket'.", otherError)
             setError(TcpConnection(otherError))
         }
       }

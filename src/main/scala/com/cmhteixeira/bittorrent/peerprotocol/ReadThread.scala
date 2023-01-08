@@ -37,7 +37,7 @@ private[peerprotocol] class ReadThread private (
 
   @tailrec
   override final def run(): Unit = {
-    MDC.put("peer-socket", peerAddress.toString)
+    MDC.put("context", peerAddress.toString)
     state.get() match {
       case Begin =>
         logger.warn("THIS SHOULD BE IMPOSSIBLE ...... Not yet connected.")
