@@ -3,17 +3,17 @@ package com.cmhteixeira.bittorrent
 import cats.Show
 import cats.implicits.{catsSyntaxTuple2Semigroupal, toTraverseOps}
 import com.cmhteixeira.bencode._
-import com.cmhteixeira.bittorrent.peerprotocol.{PeerFactoryImpl, PeerImpl}
-import com.cmhteixeira.bittorrent.swarm.SwarmImpl
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
+import com.cmhteixeira.bittorrent.swarm.{PeerFactoryImpl, SwarmImpl}
 import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl}
-import com.cmhteixeira.cmhtorrent.{MultiFile, SingleFile, Torrent}
+import com.cmhteixeira.cmhtorrent.Torrent
 import org.slf4j.LoggerFactory
 
-import scala.collection.JavaConverters._
 import java.nio.file.{Files, Paths}
 import java.security.SecureRandom
-import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
-import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
+import scala.collection.JavaConverters._
 import scala.concurrent.ExecutionContext.global
 
 object Tests extends App {
@@ -93,9 +93,18 @@ object Tests extends App {
   val (_, torrent, swarmTorrent) = all.head
   val downloadDir = Paths.get("/home/cmhteixeira/Projects/cmhTorrent/src/test/scala/com/cmhteixeira")
 
-  val peerFactory = PeerFactoryImpl(PeerImpl.Config(1000, peerId, downloadDir), global, scheduler("peers", 10))
+  val peerFactory = PeerFactoryImpl(PeerImpl.Config(1000, peerId), swarmTorrent, global, scheduler("peers", 10))
 
   val swarm =
-    SwarmImpl(tracker, global, scheduler("swarm", 10), peerFactory, swarmTorrent)
+    SwarmImpl(
+      tracker,
+      global,
+      scheduler("swarm", 10),
+      peerFactory,
+      new SecureRandom(),
+      downloadDir,
+      16384,
+      swarmTorrent
+    )
 
 }

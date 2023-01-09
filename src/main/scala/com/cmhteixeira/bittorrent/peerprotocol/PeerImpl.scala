@@ -1,26 +1,29 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import cats.implicits.toTraverseOps
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.{Config, blockSize}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
-import com.cmhteixeira.bittorrent.peerprotocol.State.MyPieceState.{Asked, Want}
-import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{SendingHandshake, TcpConnection}
+import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
+import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
+  SendingHandshake,
+  SendingHaveOrAmInterestedMessage,
+  TcpConnection
+}
 import com.cmhteixeira.bittorrent.peerprotocol.State.{
   Begin,
   ConnectionState,
   Good,
   Handshaked,
-  MyPieceState,
-  PeerPieceState,
-  PieceState,
+  MyState,
+  PeerState,
   TerminalError
 }
 import org.slf4j.{Logger, LoggerFactory, MDC}
+import scodec.bits.ByteVector
 
 import java.net._
 import java.nio.ByteBuffer
-import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
@@ -38,10 +41,11 @@ private[peerprotocol] final class PeerImpl private (
     pieceLength: Int,
     numberOfPieces: Int
 ) extends Peer {
-  private val logger: Logger = LoggerFactory.getLogger(getClass.getSimpleName)
+
+  private val logger: Logger = LoggerFactory.getLogger("Peer." + s"${peerSocket.getHostString}:${peerSocket.getPort}")
 
   def start(): Unit = {
-    logger.info(s"Initiating '$peerSocket'.")
+    logger.info(s"Initiating ...")
     scheduler.execute(connect)
   }
 
@@ -66,9 +70,7 @@ private[peerprotocol] final class PeerImpl private (
           state.set(State.begin.connected)
           scheduler.execute(sendHandShake)
           scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)
-          mainExecutor.execute(
-            ReadThread(socket, state, infoHash, peerSocket, numberOfPieces, config.downloadDir, pieceLength)
-          )
+          mainExecutor.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
         } catch {
           case error: SocketTimeoutException =>
             logger.warn(s"TCP connection timeout to '$peerSocket'.")
@@ -111,51 +113,39 @@ private[peerprotocol] final class PeerImpl private (
   override def peerAddress: SocketAddress = peerSocket
 
   @tailrec
-  override def download(pieceIndex: Int): Future[Path] = {
-    logger.info(s"Download piece $pieceIndex.")
+  override def download(blockRequest: BlockRequest): Future[ByteVector] = {
     val currentState = state.get()
+    val BlockRequest(index, offSet, lengthBlock) = blockRequest
     currentState match {
-      case handshaked @ Handshaked(_, _, _, ConnectionState(amChocked, isInterested), _, pieces) =>
-        pieces.get(pieceIndex) match {
-          case Some(PieceState(MyPieceState.Have(path), _)) => Future.successful(path)
-          case Some(PieceState(MyPieceState.Want(channel), _)) => channel.future
-          case Some(PieceState(MyPieceState.Asked(channel), _)) => channel.future
-          case Some(PieceState(MyPieceState.Downloading(channel, _), _)) => channel.future
-          case Some(PieceState(MyPieceState.NeitherHaveOrWant, _)) =>
-            if (handshaked.numberAsked == 0) {
-              val channel = Promise[Path]()
-              val newState = handshaked.updateMyState(pieceIndex, Asked(channel), ConnectionState(amChocked, true))
-              if (!state.compareAndSet(currentState, newState)) download(pieceIndex)
-              else
-                (for {
-                  _ <- if (isInterested) Try.apply(()) else sayIAmInterest
-                  _ <- allRequestMessages(pieceIndex).traverse(requestPiece)
-                } yield ()) match {
-                  case Failure(exception) =>
-                    val error = new Exception(s"Requesting piece $pieceIndex.", exception)
-                    logger.warn("What is this madness", error)
-                    channel.failure(error)
-                    channel.future
-                  case Success(_) =>
-                    logger.info(s"Just asked piece $pieceIndex.")
-                    channel.future
-                }
-            } else {
-              val channel = Promise[Path]()
-              val newState = handshaked.updateMyState(pieceIndex, Want(channel))
-              if (!state.compareAndSet(currentState, newState)) download(pieceIndex)
-              else {
-                logger.info(s"Registered interested in piece $pieceIndex.")
-                channel.future
-              }
-            }
-
-          case None =>
-            Future.failed(
-              new IndexOutOfBoundsException(s"Number of pieces: ${pieces.size}. Index passed: $pieceIndex")
+      case handshaked @ Handshaked(_, _, _, MyState(ConnectionState(_, amInterested), requests), PeerState(_, _)) =>
+        requests.get(blockRequest) match {
+          case Some(Sent(channel)) => channel.future
+          case Some(Received) =>
+            Future.failed( // todo: better way to deal with this
+              new IllegalArgumentException(s"Peer '$peerSocket' has already downloaded block '$blockRequest'.")
             )
+          case None =>
+            val channel = Promise[ByteVector]()
+            val newState = handshaked.download(blockRequest, channel)
+            if (!state.compareAndSet(currentState, newState)) download(blockRequest)
+            else
+              (for {
+                _ <- if (amInterested) Try.apply(()) else sayIAmInterest
+                _ <- requestPiece(Request(blockRequest.index, blockRequest.offSet, blockRequest.length))
+              } yield ()) match {
+                case Failure(exception) =>
+                  val msg = s"Requesting block. Piece: $index, offset: $offSet, length: $lengthBlock."
+                  val error = new Exception(msg, exception)
+                  logger.warn(msg, error)
+                  setError(SendingHaveOrAmInterestedMessage(exception))
+                  channel.failure(error)
+                  channel.future
+                case Success(_) =>
+                  logger.info(s"Sent request for block. Piece: $index, offset: $offSet, length: $lengthBlock.")
+                  channel.future
+              }
         }
-      case state => Future.failed(new IllegalStateException(s"Peer is in state '$state'. It cannot download piece."))
+      case state => Future.failed(new IllegalStateException(s"Peer cannot download. Peer state is: '$state'."))
     }
   }
 
@@ -168,6 +158,7 @@ private[peerprotocol] final class PeerImpl private (
   private def requestPiece(request: Request): Try[Unit] =
     Try(socket.getOutputStream.write(request.serialize))
 
+  // todo: re-use this somewhere else
   private def allRequestMessages(pieceIndex: Int): List[Request] =
     if (pieceIndex == numberOfPieces - 1) { // last piece
       logger.warn("Cannot do this yet ...")
@@ -185,10 +176,7 @@ private[peerprotocol] final class PeerImpl private (
 
   override def hasPiece(index: Int): Boolean = {
     state.get() match {
-      case Handshaked(_, _, _, _, _, pieces) =>
-        pieces.get(index).getOrElse(false) match {
-          case PieceState(_, PeerPieceState(has, _)) => has
-        }
+      case Handshaked(_, _, _, _, PeerState(_, piecesBitField)) => piecesBitField.get(index)
       case _ => false
     }
   }
@@ -209,7 +197,7 @@ private[peerprotocol] final class PeerImpl private (
 object PeerImpl {
 
   private val blockSize = 16384 // todo: configure this
-  case class Config(tcpConnectTimeoutMillis: Int, myPeerId: PeerId, downloadDir: Path)
+  case class Config(tcpConnectTimeoutMillis: Int, myPeerId: PeerId)
 
   def apply(
       peerSocket: InetSocketAddress,

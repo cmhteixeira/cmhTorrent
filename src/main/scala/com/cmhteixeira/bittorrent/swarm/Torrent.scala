@@ -3,6 +3,7 @@ package com.cmhteixeira.bittorrent.swarm
 import cats.data.NonEmptyList
 import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket, parseToUdpSocketAddress}
 import cats.implicits.{catsSyntaxTuple3Semigroupal, toTraverseOps}
+import com.cmhteixeira.bittorrent.swarm.Torrent.{File, split}
 import com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.cmhtorrent.PieceHash
 import com.cmhteixeira.bittorrent.tracker.{Torrent => TrackerTorrent}
@@ -14,9 +15,34 @@ case class Torrent(
     announceList: Option[NonEmptyList[NonEmptyList[UdpSocket]]]
 ) {
   def toTrackerTorrent: TrackerTorrent = TrackerTorrent(infoHash, announce, announceList)
+
+  def pieceSize(index: Int): Int = {
+    val numberPieces = info.pieces.size
+    if (index == numberPieces - 1) {
+      (info match {
+        case Torrent.SingleFile(length, _, _, _) => length.toInt
+        case Torrent.MultiFile(files, _, _, _) =>
+          files.foldLeft(0L) { case (accSize, File(size, _)) => accSize + size }.toInt
+      }) - (numberPieces - 1) * info.pieceLength.toInt
+    } else info.pieceLength.toInt // todo: fix cast
+  }
+
+  def splitInBlocks(pieceIndex: Int, blockSize: Int): List[(Int, Int)] = split(pieceSize(pieceIndex), blockSize)
 }
 
 object Torrent {
+
+  private def split(pieceSize: Int, blockSize: Int): List[(Int, Int)] = {
+    val reminder = pieceSize % blockSize
+    if (reminder == 0)
+      (0 until (pieceSize / blockSize)).map(i => (i * blockSize, blockSize)).toList
+    else {
+      val numEquallySizedBlocks = math.floor(pieceSize.toDouble / blockSize.toDouble).toInt
+      val allButLastElem = (0 until numEquallySizedBlocks).map(i => (i * blockSize, blockSize)).toList
+      val lastElem = (numEquallySizedBlocks * blockSize, reminder)
+      allButLastElem :+ lastElem
+    }
+  }
 
   sealed trait Info {
     def pieceLength: Long

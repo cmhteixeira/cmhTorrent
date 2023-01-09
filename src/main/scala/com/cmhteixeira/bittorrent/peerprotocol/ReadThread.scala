@@ -1,25 +1,18 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import cats.implicits.toTraverseOps
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.peerprotocol.State.MyPieceState.{Asked, Blocks, Downloading, Have}
-import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
-  MsgTypeNotRecognized,
-  ReadBadNumberBytes,
-  ReceivingMsg,
-  UnexpectedMsgSize,
-  WritingPieceToFile
-}
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
+import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
+import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError._
 import com.cmhteixeira.bittorrent.peerprotocol.State._
 import org.apache.commons.codec.binary.Hex
-import org.slf4j.{Logger, LoggerFactory, MDC}
+import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.ByteVector
 import sun.nio.cs.UTF_8
 
-import java.io.{IOException, InputStream}
-import java.net.{InetSocketAddress, Socket, SocketAddress}
+import java.io.InputStream
+import java.net.{InetSocketAddress, Socket}
 import java.nio.ByteBuffer
-import java.nio.file.{Files, Path, StandardOpenOption}
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
@@ -28,16 +21,13 @@ private[peerprotocol] class ReadThread private (
     socket: Socket,
     state: AtomicReference[State],
     infoHash: InfoHash,
-    peerAddress: SocketAddress,
-    pieces: Int,
-    downloadDir: Path,
-    pieceLength: Int
+    peerAddress: InetSocketAddress,
+    pieces: Int
 ) extends Runnable {
-  val logger: Logger = LoggerFactory.getLogger(getClass)
+  val logger: Logger = LoggerFactory.getLogger("PeerReader." + s"${peerAddress.getHostString}:${peerAddress.getPort}")
 
   @tailrec
   override final def run(): Unit = {
-    MDC.put("context", peerAddress.toString)
     state.get() match {
       case Begin =>
         logger.warn("THIS SHOULD BE IMPOSSIBLE ...... Not yet connected.")
@@ -130,66 +120,29 @@ private[peerprotocol] class ReadThread private (
       val pieceIndex = ByteBuffer.allocate(8).putInt(0).put(payload, 0, 4).clear().getLong.toInt
       val byteOffset = ByteBuffer.allocate(8).putInt(0).put(payload, 4, 4).clear().getLong.toInt
       val pieceBlock = ByteBuffer.allocate(blockSize).put(payload, 8, blockSize).clear().array()
-      logger.info(s"Peer has sent $blockSize bytes starting at $byteOffset for piece $pieceIndex.")
+      logger.info(s"Received block for piece $pieceIndex. Offset: $byteOffset, Size: $blockSize.")
       appendBlock(pieceIndex, byteOffset, pieceBlock)
     }
   }
 
-  private def appendBlock(pieceIndex: Int, byteOffSet: Int, block: Array[Byte]): Unit = {
+  @tailrec
+  private def appendBlock(pieceIndex: Int, offSet: Int, block: Array[Byte]): Unit = {
     val currentState = state.get()
     currentState match {
-      case handshaked @ Handshaked(_, _, _, _, _, pieces) =>
-        pieces.get(pieceIndex) match {
-          case Some(PieceState(asked @ Asked(_), _)) =>
-            val newState = handshaked.updateMyState(pieceIndex, asked.firstBlock(byteOffSet, ByteVector(block)))
-            if (!state.compareAndSet(currentState, newState)) appendBlock(pieceIndex, byteOffSet, block)
-            else logger.info(s"Downloaded block of piece $pieceIndex. Offset: $byteOffSet. Length: ${block.length}.")
-
-          case Some(PieceState(downloading @ Downloading(channel, blocks), _)) =>
-            blocks.append(byteOffSet, ByteVector(block)).assemble(pieceLength) match {
-              case Some(entirePiece) =>
-                writeFile(pieceIndex, entirePiece.toArray) match {
-                  case Failure(exception) =>
-                    val msg = s"Failed to write downloaded blocks of piece $pieceIndex into file."
-                    logger.warn(msg, exception)
-                    channel.failure(new IOException(msg, exception))
-                    setError(WritingPieceToFile(pieceIndex, exception))
-
-                  case Success(path) =>
-                    val newState = handshaked.updateMyState(pieceIndex, Have(path))
-                    if (!state.compareAndSet(currentState, newState)) appendBlock(pieceIndex, byteOffSet, block)
-                    else {
-                      logger.info(s"Finished downloading piece $pieceIndex.")
-                      channel.success(path)
-                    }
-                }
-              case None =>
-                val newState =
-                  handshaked.updateMyState(pieceIndex, downloading.anotherBlock(byteOffSet, ByteVector(block)))
-                if (!state.compareAndSet(currentState, newState)) appendBlock(pieceIndex, byteOffSet, block)
-                else
-                  logger.info(s"Downloaded block of piece $pieceIndex. Offset: $byteOffSet. Length: ${block.length}.")
-            }
-
-          case Some(state) => logger.warn(s"Received piece block but state is: '$state'.")
-
-          case None => logger.warn(s"Received unknown piece of index $pieceIndex")
-
+      case handshaked @ Handshaked(_, _, _, MyState(_, requests), _) =>
+        val blockRequest = BlockRequest(pieceIndex, offSet, block.length)
+        requests.get(blockRequest) match {
+          case Some(Sent(channel)) =>
+            val newState = handshaked.received(blockRequest)
+            if (!state.compareAndSet(currentState, newState)) appendBlock(pieceIndex, offSet, block)
+            else channel.success(ByteVector(block))
+          case Some(Received) => logger.warn("Weird....")
+          case None =>
+            logger.warn(s"Received unregistered block for piece $pieceIndex. Offset: $offSet, length: ${block.length}")
         }
       case state => logger.warn(s"Appending block to piece sadas but state is $state.")
     }
   }
-
-  private def writeFile(pieceIndex: Int, blocks: Array[Byte]): Try[Path] =
-    Try(
-      Files.write(
-        generateFileName(pieceIndex),
-        blocks,
-        StandardOpenOption.WRITE,
-        StandardOpenOption.CREATE,
-        StandardOpenOption.TRUNCATE_EXISTING
-      )
-    )
 
   private def request(msgSize: Int): Unit = {
     logger.info("Received 'request' message")
@@ -257,9 +210,6 @@ private[peerprotocol] class ReadThread private (
     logger.info(s"'bitfield' message: Peer has ${peerPieces.count(identity)} pieces.")
     setPeerPieces(peerPieces)
   }
-
-  private def generateFileName(piece: Int): Path =
-    downloadDir.resolve(s"${socket.getInetAddress.getHostAddress}.piece-$piece")
 
   @tailrec
   private def setPeerPieces(in: List[Boolean]): Unit =
@@ -340,10 +290,8 @@ object ReadThread {
       socket: Socket,
       state: AtomicReference[State],
       infoHash: InfoHash,
-      peerAddress: SocketAddress,
-      pieces: Int,
-      downloadDir: Path,
-      pieceLength: Int
+      peerAddress: InetSocketAddress,
+      pieces: Int
   ): ReadThread =
-    new ReadThread(socket, state, infoHash, peerAddress, pieces, downloadDir, pieceLength)
+    new ReadThread(socket, state, infoHash, peerAddress, pieces)
 }

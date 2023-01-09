@@ -1,12 +1,11 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import cats.data.NonEmptyList
-import com.cmhteixeira.bittorrent.peerprotocol.State.MyPieceState.NeitherHaveOrWant
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
+import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
 import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.HandshakeError
-import scodec.bits.ByteVector
+import scodec.bits.{BitVector, ByteVector}
 
 import java.io.Serializable
-import java.nio.file.Path
 import scala.concurrent.Promise
 
 private[peerprotocol] sealed trait State extends Product with Serializable
@@ -32,7 +31,7 @@ private[peerprotocol] object State {
     case class MsgTypeNotRecognized(msgType: Int) extends Error
     case class TcpConnection(error: Throwable) extends Error
     case class SendingHandshake(error: Throwable) extends Error
-
+    case class SendingHaveOrAmInterestedMessage(error: Throwable) extends Error
     case class WritingPieceToFile(pieceIndex: Int, error: Throwable) extends Error
   }
 
@@ -45,9 +44,8 @@ private[peerprotocol] object State {
         reservedBytes,
         peerId,
         protocol,
-        ConnectionState(isChocked = true, isInterested = false),
-        ConnectionState(isChocked = true, isInterested = false),
-        Pieces((1 to numPieces).toList.map(_ => PieceState(NeitherHaveOrWant, PeerPieceState(false, false))))
+        MyState(ConnectionState(isChocked = true, isInterested = false), Map.empty),
+        PeerState(ConnectionState(isChocked = true, isInterested = false), BitVector.fill(numPieces)(high = false))
       )
   }
 
@@ -61,9 +59,8 @@ private[peerprotocol] object State {
       reservedBytes: Long,
       peerId: String,
       protocol: String,
-      me: ConnectionState,
-      peer: ConnectionState,
-      pieces: Pieces
+      me: MyState,
+      peer: PeerState
   ) extends Good {
     def chokeMe: Handshaked = copy(me = me.choke)
     def chokePeer: Handshaked = copy(peer = peer.choke)
@@ -74,105 +71,43 @@ private[peerprotocol] object State {
     def meNotIntested: Handshaked = copy(me = me.notInterested)
     def peerNotInterested: Handshaked = copy(peer = peer.notInterested)
 
-    def peerPieces(bitField: List[Boolean]): Handshaked = copy(pieces = pieces.pierHasPieces(bitField))
+    def peerPieces(bitField: List[Boolean]): Handshaked = copy(peer = peer.hasPieces(bitField))
 
-    def pierHasPiece(index: Int): Handshaked = copy(pieces = pieces.pierHasPiece(index))
+    def pierHasPiece(index: Int): Handshaked = copy(peer = peer.hasPiece(index))
 
-    def updateMyState(i: Int, state: MyPieceState): Handshaked = copy(pieces = pieces.updateMyState(i, state))
-
-    def updateMyState(i: Int, state: MyPieceState, me: ConnectionState): Handshaked =
-      copy(pieces = pieces.updateMyState(i, state), me = me)
-
-    def numberAsked: Int =
-      pieces.underlying.count(_.me match {
-        case MyPieceState.Asked(_) => true
-        case _ => false
-      })
-  }
-
-  case class Pieces(underlying: List[PieceState]) {
-
-    def size: Int = underlying.size
-
-    def pierHasPieces(bitField: List[Boolean]): Pieces =
-      Pieces(
-        underlying.zip(bitField).map {
-          case (pieceState @ PieceState(_, PeerPieceState(_, peerWants)), peerHas) =>
-            pieceState.copy(peer = PeerPieceState(peerHas, peerWants))
-        }
+    def download(block: BlockRequest, channel: Promise[ByteVector]): Handshaked =
+      copy(me =
+        MyState(
+          connectionState = me.connectionState.copy(isInterested = true),
+          requests = me.requests + (block -> Sent(channel))
+        )
       )
 
-    def pierHasPiece(index: Int): Pieces =
-      Pieces(underlying.zipWithIndex.map {
-        case (pieceState @ PieceState(_, PeerPieceState(_, wants)), thisIndex) if thisIndex == index =>
-          pieceState.copy(peer = PeerPieceState(true, wants))
-        case (pair, _) => pair
-      })
-
-    def get(i: Int): Option[PieceState] = underlying.lift(i)
-
-    def update(i: Int, state: PieceState): Pieces =
-      Pieces(underlying.zipWithIndex.map {
-        case (_, index) if index == i => state
-        case (state, _) => state
-      })
-
-    def updateMyState(i: Int, state: MyPieceState): Pieces =
-      Pieces(underlying.zipWithIndex.map {
-        case (PieceState(_, peerState), index) if index == i => PieceState(state, peerState)
-        case (state, _) => state
-      })
-
+    def received(blockRequest: BlockRequest): Handshaked =
+      copy(me = me.copy(requests = me.requests + (blockRequest -> Received)))
   }
 
-  case class PieceState(me: MyPieceState, peer: PeerPieceState)
+  case class MyState(connectionState: ConnectionState, requests: Map[BlockRequest, BlockState]) {
+    def choke: MyState = copy(connectionState = connectionState.choke)
+    def unChoke: MyState = copy(connectionState = connectionState.unChoke)
+    def interested: MyState = copy(connectionState = connectionState.interested)
+    def notInterested: MyState = copy(connectionState = connectionState.notInterested)
+  }
 
-  case class PeerPieceState(has: Boolean, wants: Boolean)
+  case class PeerState(connectionState: ConnectionState, piecesBitField: BitVector) {
+    def choke: PeerState = copy(connectionState = connectionState.choke)
+    def unChoke: PeerState = copy(connectionState = connectionState.unChoke)
+    def interested: PeerState = copy(connectionState = connectionState.interested)
+    def notInterested: PeerState = copy(connectionState = connectionState.notInterested)
+    def hasPiece(index: Int): PeerState = copy(piecesBitField = piecesBitField.set(index))
+    def hasPieces(indexes: List[Boolean]): PeerState = copy(piecesBitField = BitVector.bits(indexes))
+  }
 
-  sealed trait MyPieceState extends Product with Serializable
+  sealed trait BlockState
 
-  object MyPieceState {
-
-    case class Want(channel: Promise[Path]) extends MyPieceState
-
-    case class Asked(channel: Promise[Path]) extends MyPieceState {
-
-      def firstBlock(byteOffsSet: Int, data: ByteVector): Downloading =
-        Downloading(channel, Blocks.one(byteOffsSet, data))
-    }
-
-    case class Downloading(channel: Promise[Path], blocks: Blocks) extends MyPieceState {
-
-      def anotherBlock(byteOffsSet: Int, data: ByteVector): Downloading =
-        Downloading(channel, blocks.append(byteOffsSet, data))
-    }
-    case class Have(path: Path) extends MyPieceState
-    case object NeitherHaveOrWant extends MyPieceState
-
-    case class Blocks(i: NonEmptyList[Block]) {
-      def append(byteOffset: Int, data: ByteVector): Blocks = Blocks(i :+ Block(byteOffset, data))
-
-      // todo: should we assume blocks are mutually exclusive with respect to byte offsets?
-      def assemble(pieceSize: Int): Option[ByteVector] = {
-        def internal(nextOffSet: Int, acc: ByteVector): Option[ByteVector] = {
-          if (nextOffSet == pieceSize) Some(acc)
-          else
-            i.toList.collectFirst { case Block(offset, data) if offset == nextOffSet => data } match {
-              case Some(value) => internal(nextOffSet + value.size.toInt, acc ++ value)
-              case None => None
-            }
-        }
-
-        internal(0, ByteVector.empty)
-      }
-    }
-
-    object Blocks {
-      def one(offSet: Int, data: ByteVector): Blocks = Blocks(NonEmptyList.one(Block(offSet, data)))
-    }
-
-    case class Block(offSet: Int, data: ByteVector)
-
+  object BlockState {
+    case class Sent(channel: Promise[ByteVector]) extends BlockState
+    case object Received extends BlockState
   }
 
   case class ConnectionState(isChocked: Boolean, isInterested: Boolean) {
