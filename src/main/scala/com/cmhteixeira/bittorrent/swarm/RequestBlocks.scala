@@ -1,17 +1,17 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
-import com.cmhteixeira.bittorrent.swarm.RequestBlocks.{Configuration, randomAccessFileOpeningMode}
+import com.cmhteixeira.bittorrent.swarm.RequestBlocks.Configuration
 import com.cmhteixeira.bittorrent.swarm.State.BlockState.Asked
 import com.cmhteixeira.bittorrent.swarm.State.{Active, Downloading, PeerState, Pieces}
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
-import java.io.RandomAccessFile
 import java.net.InetSocketAddress
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future}
+import scala.annotation.tailrec
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Random, Success, Try}
 
 private[swarm] class RequestBlocks private (
@@ -63,22 +63,50 @@ private[swarm] class RequestBlocks private (
   private def monkey(pieceIndex: Int, in: List[(BlockRequest, Future[ByteVector])]): Unit = {
     val currentState = pieces.get()
     val filePath = fileName(pieceIndex)
-    val backingFile = new RandomAccessFile(filePath.toFile, randomAccessFileOpeningMode)
+    val backingFile = PieceFileImpl(filePath)
     val sizeFile = torrent.pieceSize(pieceIndex)
     logger.info(s"Creating file '${filePath.toAbsolutePath}' for piece $pieceIndex with $sizeFile bytes.")
-    backingFile.write(new Array[Byte](sizeFile))
+    Try(backingFile.write(new Array[Byte](sizeFile))) match {
+      case Failure(exception) => logger.warn("OMG, this failed", exception)
+      case Success(_) => logger.info("Success")
+    }
     val downloading = Downloading(backingFile, in.map { case (blockRequest, _) => blockRequest -> Asked }.toMap)
     val newState = currentState.updateState(pieceIndex, downloading)
     if (!pieces.compareAndSet(currentState, newState)) monkey(pieceIndex, in)
-    else {
+    else
       in.foreach {
-        case (BlockRequest(index, offSet, _), eventualBlock) =>
+        case (blockRequest @ BlockRequest(_, offSet, _), eventualBlock) =>
+          val newPromise = Promise[Unit]()
           eventualBlock.onComplete {
             case Failure(exception) => logger.error("OMGGGGG....", exception)
             case Success(pieceBlock) =>
-              writerThread.add(WriterThread.Message(index, offSet, backingFile, pieceBlock))
+              writerThread.add(WriterThread.Message(newPromise, offSet, backingFile, pieceBlock))
+          }(mainExecutor)
+          newPromise.future.onComplete {
+            case Failure(exception) => logger.error("OMGGGGG....", exception)
+            case Success(_) =>
+              blockDone(blockRequest, backingFile)
           }(mainExecutor)
       }
+  }
+
+  @tailrec
+  private def blockDone(blockRequest: BlockRequest, backingFile: PieceFile): Unit = {
+    val currentState = pieces.get()
+    val BlockRequest(index, offSet, blockLength) = blockRequest
+    currentState.blockCompleted(blockRequest) match {
+      case Left(value) => logger.error(s"Very serious error: '$value'.")
+      case Right((lastBlock, newState)) =>
+        if (!pieces.compareAndSet(currentState, newState)) blockDone(blockRequest, backingFile)
+        else
+          lastBlock match {
+            case Some(value) =>
+              logger.info(
+                s"Wrote last block of piece $index. Offset: $offSet, length: $blockLength. Path piece: '$value'."
+              )
+              backingFile.close()
+            case None => logger.info(s"Wrote block. Piece: $index, offset: $offSet, length: $blockLength.")
+          }
     }
   }
 
@@ -89,7 +117,7 @@ private[swarm] class RequestBlocks private (
 }
 
 private[swarm] object RequestBlocks {
-  private val randomAccessFileOpeningMode = "rws"
+  private val randomAccessFileOpeningMode = "rw"
 
   case class Configuration(downloadDir: Path, blockSize: Int)
 

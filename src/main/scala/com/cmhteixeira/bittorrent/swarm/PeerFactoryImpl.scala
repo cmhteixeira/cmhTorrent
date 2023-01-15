@@ -22,8 +22,7 @@ final class PeerFactoryImpl private (
       torrent.infoHash,
       mainExecutor,
       scheduler,
-      torrent.info.pieces.size,
-      torrent.info.pieceLength.toInt
+      torrent.info.pieces.size
     )
 }
 

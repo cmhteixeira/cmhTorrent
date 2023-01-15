@@ -5,7 +5,6 @@ import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.cmhtorrent.PieceHash
 
-import java.io.RandomAccessFile
 import java.nio.file.Path
 
 private[swarm] object State {
@@ -28,9 +27,41 @@ private[swarm] object State {
         case (_, _: Downloading) => true
         case _ => false
       }
+
+    def blockCompleted(block: BlockRequest): Either[Pieces.Error, (Option[Path], Pieces)] = {
+      underlying.lift(block.index) match {
+        case Some((_, Missing)) => Left(Pieces.OmgError(s"Piece index ${block.index} set to state missing."))
+        case Some((_, downloading @ Downloading(pieceFile, blocks))) =>
+          blocks.get(block) match {
+            case Some(BlockState.Missing) => Left(Pieces.OmgError(s"Block '$block' set to missing."))
+            case Some(BlockState.Asked) =>
+              val isLastBlock = blocks.count {
+                case (_, BlockState.WrittenToFile) => true
+                case _ => false
+              } == blocks.size - 1
+
+              if (isLastBlock) {
+                val newState =
+                  updateState(block.index, Downloaded(pieceFile.path))
+                Right(Some(pieceFile.path), newState)
+              } else {
+                val newState =
+                  updateState(block.index, downloading.copy(blocks = blocks + (block -> BlockState.WrittenToFile)))
+                Right(None -> newState)
+              }
+
+            case Some(BlockState.WrittenToFile) => Left(Pieces.OmgError(s"Block '$block' already written to file"))
+            case None => Left(Pieces.OmgError(s"Block $block not found."))
+          }
+        case Some((_, Downloaded(_))) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded."))
+        case None => Left(Pieces.OmgError(s"Piece index ${block.index} not found."))
+      }
+    }
   }
 
   object Pieces {
+    sealed trait Error
+    case class OmgError(msg: String) extends Error
 
     def from(pieces: NonEmptyList[PieceHash]): Pieces = Pieces(pieces.toList.map(hash => hash -> Missing))
   }
@@ -38,8 +69,7 @@ private[swarm] object State {
   sealed trait PieceState extends Product with Serializable
 
   case class Downloading(
-      file: RandomAccessFile,
-      //      whenAllFinished: Promise[Path],
+      file: PieceFile,
       blocks: Map[BlockRequest, BlockState]
   ) extends PieceState
 

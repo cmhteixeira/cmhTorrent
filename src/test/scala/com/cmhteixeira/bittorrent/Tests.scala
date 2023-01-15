@@ -14,6 +14,7 @@ import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.collection.JavaConverters._
+import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.global
 
 object Tests extends App {
@@ -93,7 +94,15 @@ object Tests extends App {
   val (_, torrent, swarmTorrent) = all.head
   val downloadDir = Paths.get("/home/cmhteixeira/Projects/cmhTorrent/src/test/scala/com/cmhteixeira")
 
-  val peerFactory = PeerFactoryImpl(PeerImpl.Config(1000, peerId), swarmTorrent, global, scheduler("peers", 10))
+  val peersThreadPool = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool(new ThreadFactory {
+    val counter = new AtomicLong(0)
+
+    override def newThread(r: Runnable): Thread =
+      new Thread(r, s"peers-${counter.getAndIncrement()}")
+  }))
+
+  val peerFactory =
+    PeerFactoryImpl(PeerImpl.Config(1000, peerId), swarmTorrent, peersThreadPool, scheduler("peers", 10))
 
   val swarm =
     SwarmImpl(

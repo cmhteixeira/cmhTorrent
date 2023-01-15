@@ -2,7 +2,7 @@ package com.cmhteixeira.bittorrent.peerprotocol
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
-import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.{Config, blockSize}
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Config
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
 import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
 import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
@@ -38,7 +38,6 @@ private[peerprotocol] final class PeerImpl private (
     state: AtomicReference[State],
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
-    pieceLength: Int,
     numberOfPieces: Int
 ) extends Peer {
 
@@ -158,22 +157,6 @@ private[peerprotocol] final class PeerImpl private (
   private def requestPiece(request: Request): Try[Unit] =
     Try(socket.getOutputStream.write(request.serialize))
 
-  // todo: re-use this somewhere else
-  private def allRequestMessages(pieceIndex: Int): List[Request] =
-    if (pieceIndex == numberOfPieces - 1) { // last piece
-      logger.warn("Cannot do this yet ...")
-      List()
-    } else {
-      if (pieceLength % blockSize == 0)
-        (0 until (pieceLength / blockSize)).map(i => Request(pieceIndex, i * blockSize, blockSize)).toList
-      else {
-        val noNormalSizedBlocks = math.floor(pieceLength.toDouble / blockSize.toDouble).toInt
-        val firstBlocks = (0 until noNormalSizedBlocks).map(i => Request(pieceIndex, i * blockSize, blockSize))
-        val lastBlock = Request(pieceIndex, blockSize * noNormalSizedBlocks, pieceLength % blockSize)
-        firstBlocks.toList :+ lastBlock
-      }
-    }
-
   override def hasPiece(index: Int): Boolean = {
     state.get() match {
       case Handshaked(_, _, _, _, PeerState(_, piecesBitField)) => piecesBitField.get(index)
@@ -196,7 +179,6 @@ private[peerprotocol] final class PeerImpl private (
 
 object PeerImpl {
 
-  private val blockSize = 16384 // todo: configure this
   case class Config(tcpConnectTimeoutMillis: Int, myPeerId: PeerId)
 
   def apply(
@@ -205,8 +187,7 @@ object PeerImpl {
       infoHash: InfoHash,
       mainExecutor: ExecutionContext,
       scheduledExecutorService: ScheduledExecutorService,
-      numberOfPieces: Int,
-      pieceLength: Int
+      numberOfPieces: Int
   ): PeerImpl =
     new PeerImpl(
       new Socket(),
@@ -216,7 +197,6 @@ object PeerImpl {
       new AtomicReference[State](State.begin),
       mainExecutor,
       scheduledExecutorService,
-      pieceLength,
       numberOfPieces
     )
 }

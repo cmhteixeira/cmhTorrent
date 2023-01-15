@@ -3,33 +3,39 @@ package com.cmhteixeira.bittorrent.swarm
 import com.cmhteixeira.bittorrent.swarm.WriterThread.Message
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
-import java.io.RandomAccessFile
+
 import java.util.concurrent.BlockingQueue
-import scala.concurrent.ExecutionContext
+import scala.annotation.tailrec
+import scala.concurrent.{ExecutionContext, Promise}
 import scala.util.{Failure, Success, Try}
 
-class WriterThread private (blockingQueue: BlockingQueue[WriterThread.Message], ec: ExecutionContext) {
-  private val logger = LoggerFactory.getLogger("Swarm-FileWriter")
+class WriterThread private (queue: BlockingQueue[WriterThread.Message], ec: ExecutionContext) {
+  private val logger = LoggerFactory.getLogger("BlockWriter")
 
   ec.execute(new Runnable { def run(): Unit = runForever() })
 
   def add(msg: Message): Unit = {
-    val Message(index, offset, _, block) = msg
-    logger.info(s"Submitting message. Piece: $index, offset: $offset, length: ${block.length}")
-    blockingQueue.add(msg)
+    queue.add(msg)
+    val Message(_, offset, pieceFile, block) = msg
+    logger.info(s"Queued message. Path: ${pieceFile.path}, offset: $offset, length: ${block.length}")
   }
 
+  @tailrec
   private def runForever(): Unit = {
-    Try(blockingQueue.take()) match {
+    Try(queue.take()) match {
       case Failure(exception) => logger.error("Taking element from queue.", exception)
-      case Success(msg @ Message(index, offset, _, block)) =>
+      case Success(msg @ Message(channel, offset, pieceFile, block)) =>
         writeBlockToFile(msg) match {
           case Failure(exception) =>
-            logger.error(s"Writing block. Piece: $index, offset: $offset, length: ${block.length}.", exception)
+            val msg =
+              s"Writing block to '${pieceFile.path}'. Offset: $offset, length: ${block.length}. Queue size: ${queue.size()}."
+            logger.error(msg, exception)
+            channel.failure(new Exception(msg, exception))
           case Success(_) =>
-            logger.info(
-              s"Wrote block. Piece: $index, offset: $offset, length: ${block.length}. There are ${blockingQueue.size()} in the queue."
+            logger.debug(
+              s"Wrote block to '${pieceFile.path}'. Offset: $offset, length: ${block.length}. Queue size: ${queue.size()}."
             )
+            channel.success(())
             runForever()
         }
     }
@@ -38,18 +44,14 @@ class WriterThread private (blockingQueue: BlockingQueue[WriterThread.Message], 
   private def writeBlockToFile(msg: Message): Try[Unit] = {
     val Message(_, offset, file, block) = msg
     for {
-      _ <- Try(file.seek(offset))
-      _ <- Try(file.write(block.toArray))
+      _ <- file.seek(offset)
+      _ <- file.write(block.toArray)
     } yield ()
-
-    // check if it is the last block of this piece.
-    //    - if so, update state and finish promise channel
   }
-
 }
 
 object WriterThread {
-  case class Message(pieceIndex: Int, offset: Int, file: RandomAccessFile, block: ByteVector)
+  case class Message(channel: Promise[Unit], offset: Int, file: PieceFile, block: ByteVector)
 
   def apply(executionContext: ExecutionContext, blockingQueue: BlockingQueue[WriterThread.Message]): WriterThread =
     new WriterThread(blockingQueue, executionContext) // todo: This is confusing. Improve ...
