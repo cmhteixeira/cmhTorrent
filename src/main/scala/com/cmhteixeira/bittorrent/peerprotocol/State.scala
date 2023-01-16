@@ -6,6 +6,7 @@ import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.HandshakeErro
 import scodec.bits.{BitVector, ByteVector}
 
 import java.io.Serializable
+import java.util.concurrent.ScheduledFuture
 import scala.concurrent.Promise
 
 private[peerprotocol] sealed trait State extends Product with Serializable
@@ -33,11 +34,14 @@ private[peerprotocol] object State {
     case class SendingHandshake(error: Throwable) extends Error
     case class SendingHaveOrAmInterestedMessage(error: Throwable) extends Error
     case class WritingPieceToFile(pieceIndex: Int, error: Throwable) extends Error
+    case object ReadThreadSeesBeginState extends Error
+    case class ImpossibleToScheduleKeepAlives(error: Throwable) extends Error
+    case class ImpossibleState(currentState: State, msg: String) extends Error
   }
 
   def begin = Begin
 
-  case object TcpConnected extends Good {
+  case class TcpConnected(channel: Promise[Unit]) extends Good {
 
     def handShaked(reservedBytes: Long, peerId: String, protocol: String, numPieces: Int): Handshaked =
       Handshaked(
@@ -45,7 +49,8 @@ private[peerprotocol] object State {
         peerId,
         protocol,
         MyState(ConnectionState(isChocked = true, isInterested = false), Map.empty),
-        PeerState(ConnectionState(isChocked = true, isInterested = false), BitVector.fill(numPieces)(high = false))
+        PeerState(ConnectionState(isChocked = true, isInterested = false), BitVector.fill(numPieces)(high = false)),
+        None
       )
   }
 
@@ -60,7 +65,8 @@ private[peerprotocol] object State {
       peerId: String,
       protocol: String,
       me: MyState,
-      peer: PeerState
+      peer: PeerState,
+      keepAliveTasks: Option[ScheduledFuture[Unit]]
   ) extends Good {
     def chokeMe: Handshaked = copy(me = me.choke)
     def chokePeer: Handshaked = copy(peer = peer.choke)
@@ -85,6 +91,9 @@ private[peerprotocol] object State {
 
     def received(blockRequest: BlockRequest): Handshaked =
       copy(me = me.copy(requests = me.requests + (blockRequest -> Received)))
+
+    def registerKeepAliveTaskHandler(task: ScheduledFuture[Unit]): Handshaked =
+      copy(keepAliveTasks = Some(task))
   }
 
   case class MyState(connectionState: ConnectionState, requests: Map[BlockRequest, BlockState]) {

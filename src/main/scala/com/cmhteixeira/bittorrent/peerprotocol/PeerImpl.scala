@@ -6,12 +6,12 @@ import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Config
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
 import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
 import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
-  SendingHandshake,
+  ImpossibleState,
+  ImpossibleToScheduleKeepAlives,
   SendingHaveOrAmInterestedMessage,
   TcpConnection
 }
 import com.cmhteixeira.bittorrent.peerprotocol.State.{
-  Begin,
   ConnectionState,
   Good,
   Handshaked,
@@ -19,13 +19,13 @@ import com.cmhteixeira.bittorrent.peerprotocol.State.{
   PeerState,
   TerminalError
 }
-import org.slf4j.{Logger, LoggerFactory, MDC}
+import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.ByteVector
 
 import java.net._
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
+import java.util.concurrent.{ScheduledExecutorService, ScheduledFuture, TimeUnit}
 import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
@@ -51,61 +51,62 @@ private[peerprotocol] final class PeerImpl private (
   private def sendKeepAlive: Runnable =
     new Runnable {
 
-      def run(): Unit = {
-        MDC.put("context", peerSocket.toString)
-        Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
-          case Failure(exception) => logger.warn(s"Failed to send keep alive message to '$peerSocket'.", exception)
-          case Success(_) => logger.info(s"Keep alive message sent to '$peerSocket'.")
+      def run(): Unit =
+        state.get() match {
+          case _: Handshaked =>
+            Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
+              case Failure(exception) => logger.warn(s"Failed to send keep alive message.", exception)
+              case Success(_) => logger.info(s"Keep alive message sent.")
+            }
+          case state => logger.warn(s"Not sending scheduled handshake as state is '$state'.")
         }
-      }
     }
+
+  private def registerKeepAliveTask(keepAliveTask: ScheduledFuture[Unit]): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case handshaked: Handshaked =>
+        if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
+          registerKeepAliveTask(keepAliveTask)
+      case TerminalError(_, error) =>
+        logger.warn(s"Not scheduling keep-alive tasks as peer in Terminal error state: '$error'.")
+      case state =>
+        logger.warn(s"This state should be impossible at the stage of scheduling keep-alive tasks: '$state'.")
+        setError(ImpossibleState(state, "This state should be impossible at the stage of scheduling keep-alive tasks"))
+        socket.close()
+    }
+  }
+
+  private def onceHandshakeReceived(handshakeChannel: Future[Unit]): Unit =
+    handshakeChannel.onComplete {
+      case Failure(exception) => logger.error("Failed to receive handshake. Doing nothing.", exception)
+      case Success(_) =>
+        Try(scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)) match {
+          case Failure(exception) =>
+            logger.warn("Scheduling keep alive messages to peer failed. Have you shutdown the scheduler?", exception)
+            setError(ImpossibleToScheduleKeepAlives(exception))
+            socket.close()
+          case Success(keepAliveTask) => registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]])
+        }
+    }(mainExecutor)
 
   private def connect: Runnable =
     new Runnable {
 
-      override def run(): Unit = {
-        try {
-          socket.connect(peerSocket, config.tcpConnectTimeoutMillis)
-          state.set(State.begin.connected)
-          scheduler.execute(sendHandShake)
-          scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)
-          mainExecutor.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
-        } catch {
-          case error: SocketTimeoutException =>
-            logger.warn(s"TCP connection timeout to '$peerSocket'.")
-            setError(TcpConnection(error))
-          case otherError: Throwable =>
-            logger.warn(s"TCP connection error '$peerSocket'.", otherError)
-            setError(TcpConnection(otherError))
+      def run(): Unit =
+        (for {
+          _ <- Try(socket.connect(peerSocket, config.tcpConnectTimeoutMillis))
+          promise = Promise[Unit]() // ReadThread completes this once it receives the handshake.
+          _ = state.set(State.begin.connected(promise))
+          _ = mainExecutor.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
+          _ <- Try(socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize))
+        } yield promise) match {
+          case Failure(exception) =>
+            logger.warn("Connecting or sending handshake.", exception)
+            setError(TcpConnection(exception))
+          case Success(promise) => onceHandshakeReceived(promise.future)
         }
-      }
     }
-
-  private def sendHandShake: Runnable = {
-    new Runnable {
-      override def run(): Unit = {
-        try {
-          state.get() match {
-            case Begin =>
-              logger.warn(
-                "THIS SHOULD BE IMPOSSIBLE.....Sending handshake, but not yet connected. Retrying later in 100 millis."
-              )
-              Thread.sleep(100)
-              run()
-            case State.TcpConnected =>
-              socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize)
-              logger.info(s"Sent handshake to '$peerSocket'.")
-            case state => logger.debug(s"Did not send handshake to '$peerSocket' as state is already '$state'.")
-          }
-        } catch {
-          case e: Throwable =>
-            logger.error(s"Error sending handshake to '$peerSocket'.")
-            setError(SendingHandshake(e))
-        }
-      }
-    }
-
-  }
 
   override def getState: State = state.get()
 
@@ -116,7 +117,7 @@ private[peerprotocol] final class PeerImpl private (
     val currentState = state.get()
     val BlockRequest(index, offSet, lengthBlock) = blockRequest
     currentState match {
-      case handshaked @ Handshaked(_, _, _, MyState(ConnectionState(_, amInterested), requests), PeerState(_, _)) =>
+      case handshaked @ Handshaked(_, _, _, MyState(ConnectionState(_, amInterested), requests), PeerState(_, _), _) =>
         requests.get(blockRequest) match {
           case Some(Sent(channel)) => channel.future
           case Some(Received) =>
@@ -159,7 +160,7 @@ private[peerprotocol] final class PeerImpl private (
 
   override def hasPiece(index: Int): Boolean = {
     state.get() match {
-      case Handshaked(_, _, _, _, PeerState(_, piecesBitField)) => piecesBitField.get(index)
+      case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField.get(index)
       case _ => false
     }
   }
@@ -167,13 +168,29 @@ private[peerprotocol] final class PeerImpl private (
   @tailrec
   private def setError(msg: TerminalError.Error): Unit = {
     val currentState = state.get()
-    val newState = currentState match {
-      case goodState: Good => TerminalError(goodState, msg)
-      case error: TerminalError => error
+    currentState match {
+      case handshaked: Handshaked =>
+        val error = TerminalError(handshaked, msg)
+        if (!state.compareAndSet(currentState, error)) setError(msg)
+        else {
+          logger.info(s"Error '$msg' encountered. Closing connection")
+          handshaked.keepAliveTasks match {
+            case Some(value) =>
+              logger.info("Cancelling keep-alive tasks.")
+              value.cancel(false)
+            case None => logger.info("No keep alive tasks to cancel.")
+          }
+          socket.close()
+        }
+      case goodState: Good =>
+        val error = TerminalError(goodState, msg)
+        if (!state.compareAndSet(currentState, error)) setError(msg)
+        else {
+          logger.info(s"Error '$msg' encountered. Closing connection")
+          socket.close()
+        }
+      case error: TerminalError => ()
     }
-
-    if (!state.compareAndSet(currentState, newState)) setError(msg)
-    else logger.info(s"Set error '$msg'.")
   }
 }
 

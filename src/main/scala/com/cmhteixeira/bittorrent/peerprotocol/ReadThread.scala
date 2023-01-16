@@ -30,10 +30,9 @@ private[peerprotocol] class ReadThread private (
   override final def run(): Unit = {
     state.get() match {
       case Begin =>
-        logger.warn("THIS SHOULD BE IMPOSSIBLE ...... Not yet connected.")
-        Thread.sleep(100)
-        run()
-      case tcpConnected @ TcpConnected =>
+        logger.error("This state should be impossible to be seen from the ReadThread. Exiting.")
+        setError(ReadThreadSeesBeginState)
+      case tcpConnected @ TcpConnected(_) =>
         receiveHandshake(tcpConnected, socket.getInputStream)
         run()
       case _: Handshaked =>
@@ -50,15 +49,28 @@ private[peerprotocol] class ReadThread private (
   @tailrec
   private def setError(msg: TerminalError.Error): Unit = {
     val currentState = state.get()
-    val newState = currentState match {
-      case goodState: Good => TerminalError(goodState, msg)
-      case error: TerminalError => error
-    }
-
-    if (!state.compareAndSet(currentState, newState)) setError(msg)
-    else {
-      logger.info(s"Error '$msg' encountered. Closing connection")
-      socket.close()
+    currentState match {
+      case handshaked: Handshaked =>
+        val error = TerminalError(handshaked, msg)
+        if (!state.compareAndSet(currentState, error)) setError(msg)
+        else {
+          logger.info(s"Error '$msg' encountered. Closing connection")
+          handshaked.keepAliveTasks match {
+            case Some(value) =>
+              logger.info("Cancelling keep-alive tasks.")
+              value.cancel(false)
+            case None => logger.info("No keep alive tasks to cancel.")
+          }
+          socket.close()
+        }
+      case goodState: Good =>
+        val error = TerminalError(goodState, msg)
+        if (!state.compareAndSet(currentState, error)) setError(msg)
+        else {
+          logger.info(s"Error '$msg' encountered. Closing connection")
+          socket.close()
+        }
+      case error: TerminalError => ()
     }
   }
 
@@ -72,7 +84,7 @@ private[peerprotocol] class ReadThread private (
         socket.getInputStream.readNBytes(Int.MaxValue)
         socket.getInputStream.readNBytes((msgSizeLong - Int.MaxValue).toInt)
       } else if (msgSizeLong < 0L) logger.warn(s"Received message with negative size of $msgSizeLong.")
-      else if (msgSizeLong == 0L) logger.info(s"Keep alive message from '${socket.getRemoteSocketAddress}'.")
+      else if (msgSizeLong == 0L) logger.info(s"Keep alive message.")
       else receiveNonHandshakeMessage(msgSizeLong.toInt) // todo: this is safe at this point....but allow for bigger
     }
   }
@@ -129,7 +141,7 @@ private[peerprotocol] class ReadThread private (
   private def appendBlock(pieceIndex: Int, offSet: Int, block: Array[Byte]): Unit = {
     val currentState = state.get()
     currentState match {
-      case handshaked @ Handshaked(_, _, _, MyState(_, requests), _) =>
+      case handshaked @ Handshaked(_, _, _, MyState(_, requests), _, _) =>
         val blockRequest = BlockRequest(pieceIndex, offSet, block.length)
         requests.get(blockRequest) match {
           case Some(Sent(channel)) =>
@@ -244,7 +256,7 @@ private[peerprotocol] class ReadThread private (
     }
   }
 
-  private def receiveHandshake(begin: TcpConnected.type, input: InputStream): Unit = {
+  private def receiveHandshake(begin: TcpConnected, input: InputStream): Unit =
     (for {
       protocolLength <- toEither(input.read(), err => begin.handshakeError("Error extracting protocol length"))
       protocolLengthValid <-
@@ -270,15 +282,12 @@ private[peerprotocol] class ReadThread private (
       pieces
     )) match {
       case Left(value) =>
-        logger.warn(s"Error receiving handshake: $value")
-        if (!state.compareAndSet(begin, value))
-          logger.info(s"OMG....: $value")
+        logger.error(s"Error receiving handshake: $value")
+        setError(value.error)
       case Right(value) =>
-        logger.info(s"Success receiving handshake.")
-        if (!state.compareAndSet(begin, value))
-          logger.info(s"OMG....: $value")
+        if (!state.compareAndSet(begin, value)) logger.error("This should positively never happen.")
+        else begin.channel.success(())
     }
-  }
 
   private def toEither[A, B](f: => A, error: Throwable => B): Either[B, A] =
     Try(f).toEither.left.map(error)

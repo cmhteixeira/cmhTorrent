@@ -1,7 +1,7 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
-import com.cmhteixeira.bittorrent.swarm.RequestBlocks.Configuration
+import com.cmhteixeira.bittorrent.swarm.RequestBlocks.{Configuration, maximumPieces}
 import com.cmhteixeira.bittorrent.swarm.State.BlockState.Asked
 import com.cmhteixeira.bittorrent.swarm.State.{Active, Downloading, PeerState, Pieces}
 import org.slf4j.LoggerFactory
@@ -38,9 +38,10 @@ private[swarm] class RequestBlocks private (
     val currentPeers = peers.get()
     val currentState = pieces.get()
     val downloadingPieces = currentState.countDownloading
-    if (downloadingPieces >= 5) logger.info(s"Downloading $downloadingPieces pieces. Waiting until some finish.")
+    if (downloadingPieces >= maximumPieces)
+      logger.info(s"Downloading $downloadingPieces pieces. Waiting until some finish.")
     else {
-      val numPiecesToDownload = 5 - downloadingPieces
+      val numPiecesToDownload = maximumPieces - downloadingPieces
       val piecesToDownload = currentState.missingPieces.take(numPiecesToDownload)
       piecesToDownload
         .flatMap { pieceIndex =>
@@ -117,7 +118,7 @@ private[swarm] class RequestBlocks private (
 }
 
 private[swarm] object RequestBlocks {
-  private val randomAccessFileOpeningMode = "rw"
+  private val maximumPieces = 5
 
   case class Configuration(downloadDir: Path, blockSize: Int)
 
