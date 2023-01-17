@@ -50,7 +50,8 @@ object SwarmImpl {
         torrent,
         random,
         RequestBlocks.Configuration(downloadDir, blockSize),
-        mainExecutor
+        mainExecutor,
+        scheduler
       )
     )
   }

@@ -61,6 +61,8 @@ private[peerprotocol] class ReadThread private (
               value.cancel(false)
             case None => logger.info("No keep alive tasks to cancel.")
           }
+          logger.info("???")
+          handshaked.me.requests.collect { case (_, Sent(promiseCompletion)) => promiseCompletion.failure(new Exception(s"Impossible to complete: $msg.")) }
           socket.close()
         }
       case goodState: Good =>
@@ -70,7 +72,7 @@ private[peerprotocol] class ReadThread private (
           logger.info(s"Error '$msg' encountered. Closing connection")
           socket.close()
         }
-      case error: TerminalError => ()
+      case _: TerminalError => ()
     }
   }
 
