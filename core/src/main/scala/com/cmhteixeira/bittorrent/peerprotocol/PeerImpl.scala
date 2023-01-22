@@ -108,7 +108,19 @@ private[peerprotocol] final class PeerImpl private (
         }
     }
 
-  override def getState: State = state.get()
+  override def getState: Peer.PeerState =
+    state.get() match {
+      case State.TcpConnected(_) => Peer.TcpConnected
+      case State.Begin => Peer.Begin
+      case Handshaked(_, peerId, _, _, peer, _) =>
+        Peer.HandShaked(
+          peerId = peerId,
+          choked = peer.connectionState.isChocked,
+          interested = peer.connectionState.isInterested,
+          pieces = peer.piecesBitField
+        )
+      case TerminalError(_, _) => Peer.Error("Internal error")
+    }
 
   override def peerAddress: SocketAddress = peerSocket
 

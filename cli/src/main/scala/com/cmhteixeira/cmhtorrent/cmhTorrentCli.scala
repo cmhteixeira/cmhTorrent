@@ -1,7 +1,60 @@
 package com.cmhteixeira.cmhtorrent
 
-import org.slf4j.LoggerFactory
+import com.cmhteixeira.bittorrent.PeerId
+import com.cmhteixeira.bittorrent.client.{CmhClientImpl, SwarmFactoryImpl}
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
+import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl}
+
+import java.nio.file.Paths
+import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.ExecutionContext.global
 
 object cmhTorrentCli extends App {
-  val logger = LoggerFactory.getLogger("cmhTorrent-Cli")
+  private val peerId = PeerId("cmh-4234567891011121").getOrElse(throw new IllegalArgumentException("Peer id is bad."))
+  private val cmhTorrentDir = Paths.get("/home/cmhteixeira/.cmhTorrent")
+
+  private def scheduler(prefix: String, numThreads: Int): ScheduledExecutorService =
+    Executors.newScheduledThreadPool(
+      numThreads,
+      new ThreadFactory {
+        val counter = new AtomicLong(0)
+
+        def newThread(r: Runnable): Thread = {
+          val thread = new Thread(r, s"$prefix-${counter.getAndIncrement()}")
+          thread.setDaemon(false)
+          thread
+        }
+      }
+    )
+
+  private val peersThreadPool = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool(new ThreadFactory {
+    val counter = new AtomicLong(0)
+
+    override def newThread(r: Runnable): Thread =
+      new Thread(r, s"peers-${counter.getAndIncrement()}")
+  }))
+
+  private val tracker = TrackerImpl(
+    global,
+    scheduler("tracker", 10),
+    RandomTransactionIdGenerator(SecureRandom.getInstanceStrong),
+    TrackerImpl.Config(port = 8083, peerId = peerId, key = 123)
+  )
+
+  private val swarmFactory =
+    SwarmFactoryImpl(
+      random = new SecureRandom(),
+      peerConfig = PeerImpl.Config(1000, peerId),
+      scheduler = scheduler("swarm-", 4),
+      mainExecutor = global,
+      tracker = tracker
+    )
+
+  CmhTorrentREPL(
+    CmhClientImpl(swarmFactory),
+    CmhTorrentREPL.ReplConfig(cmhTorrentDir, cmhTorrentDir.resolve("history"))
+  ).run()
 }

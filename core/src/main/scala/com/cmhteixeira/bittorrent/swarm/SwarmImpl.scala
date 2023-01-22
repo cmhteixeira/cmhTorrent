@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.swarm.State.{PeerState, Pieces}
+import com.cmhteixeira.bittorrent.swarm.Swarm.Tried
 import com.cmhteixeira.bittorrent.tracker.Tracker
 
 import java.net.InetSocketAddress
@@ -11,15 +12,27 @@ import scala.concurrent.ExecutionContext
 import scala.util.Random
 
 private[bittorrent] class SwarmImpl private (
+    thePeers: AtomicReference[Map[InetSocketAddress, PeerState]],
+    thePieces: AtomicReference[State.Pieces],
     torrent: Torrent,
     tracker: Tracker,
     scheduler: ScheduledExecutorService,
     upsertPeers: UpsertPeers,
     requestBlocks: RequestBlocks
-) {
+) extends Swarm {
   tracker.submit(torrent.toTrackerTorrent)
   scheduler.scheduleAtFixedRate(upsertPeers, 0, 60, TimeUnit.SECONDS)
   scheduler.scheduleAtFixedRate(requestBlocks, 0, 20, TimeUnit.SECONDS)
+
+  override def peers: Map[InetSocketAddress, Swarm.PeerState] =
+    thePeers.get().map {
+      case (peerSocket, State.Tried(triedLast)) => peerSocket -> Tried(triedLast)
+      case (peerSocket, State.Active(peer)) => peerSocket -> Swarm.On(peer.getState)
+    }
+
+  override def pieces: List[State.PieceState] =
+    thePieces.get().underlying.map { case (_, state) => state }
+  override def close: Unit = println("Closing this and that")
 }
 
 object SwarmImpl {
@@ -39,6 +52,8 @@ object SwarmImpl {
     val writerThread = WriterThread(mainExecutor, new LinkedBlockingQueue[WriterThread.Message]())
 
     new SwarmImpl(
+      peers,
+      pieces,
       torrent,
       tracker,
       scheduler,
