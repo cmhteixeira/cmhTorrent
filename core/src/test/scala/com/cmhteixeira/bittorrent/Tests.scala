@@ -92,7 +92,7 @@ object Tests extends App {
   }
 
   val (_, torrent, swarmTorrent) = all.head
-  val downloadDir = Paths.get("/home/cmhteixeira/Projects/cmhTorrent/src/test/scala/com/cmhteixeira")
+  val downloadDir = Paths.get("/home/cmhteixeira/Projects/cmhTorrent/core/src/test/scala/com/cmhteixeira")
 
   val peersThreadPool = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool(new ThreadFactory {
     val counter = new AtomicLong(0)
