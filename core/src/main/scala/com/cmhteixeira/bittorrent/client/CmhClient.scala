@@ -13,7 +13,7 @@ trait CmhClient {
   def piecesStatus(infoHash: InfoHash): Any
   def peerStatus(infoHash: InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]]
 
-  def listTorrents: List[InfoHash]
+  def listTorrents: List[CmhClient.TorrentDetails]
 
   def stop(t: InfoHash): Boolean
   def delete(t: InfoHash): Boolean
@@ -22,6 +22,16 @@ trait CmhClient {
 }
 
 object CmhClient {
+
+  case class TorrentDetails(
+      infoHash: InfoHash,
+      piecesDownloaded: Int,
+      piecesTotal: Int,
+      peersOn: Int,
+      peersConnectedNotActive: Int,
+      peersTotal: Int
+  )
+
   sealed trait SubmissionError
   case object FileDoesNotExist extends SubmissionError
   case class ParsingError(someError: String) extends SubmissionError

@@ -3,6 +3,8 @@ package com.cmhteixeira.bittorrent.swarm
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.slf4j.LoggerFactory
 import State._
+import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PeerFactory
+
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicReference
 
@@ -19,7 +21,7 @@ private[swarm] class UpsertPeers private (
     val newPeers = tracker
       .peers(torrent.infoHash)
       .filterNot(currentPeers.contains)
-      .map(peerSocket => peerSocket -> Active(peerFactory.peer(peerSocket)))
+      .map(peerSocket => peerSocket -> Active(peerFactory(peerSocket)))
       .toMap
 
     if (!peers.compareAndSet(currentPeers, currentPeers ++ newPeers)) run()

@@ -36,7 +36,7 @@ private[peerprotocol] final class PeerImpl private (
     config: Config,
     infoHash: InfoHash,
     state: AtomicReference[State],
-    mainExecutor: ExecutionContext,
+    peersThreadPool: ExecutionContext,
     scheduler: ScheduledExecutorService,
     numberOfPieces: Int
 ) extends Peer {
@@ -88,7 +88,7 @@ private[peerprotocol] final class PeerImpl private (
             socket.close()
           case Success(keepAliveTask) => registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]])
         }
-    }(mainExecutor)
+    }(peersThreadPool)
 
   private def connect: Runnable =
     new Runnable {
@@ -98,7 +98,7 @@ private[peerprotocol] final class PeerImpl private (
           _ <- Try(socket.connect(peerSocket, config.tcpConnectTimeoutMillis))
           promise = Promise[Unit]() // ReadThread completes this once it receives the handshake.
           _ = state.set(State.begin.connected(promise))
-          _ = mainExecutor.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
+          _ = peersThreadPool.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
           _ <- Try(socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize))
         } yield promise) match {
           case Failure(exception) =>
@@ -219,7 +219,7 @@ object PeerImpl {
       peerSocket: InetSocketAddress,
       config: Config,
       infoHash: InfoHash,
-      mainExecutor: ExecutionContext,
+      peersThreadPool: ExecutionContext,
       scheduledExecutorService: ScheduledExecutorService,
       numberOfPieces: Int
   ): PeerImpl =
@@ -229,7 +229,7 @@ object PeerImpl {
       config,
       infoHash,
       new AtomicReference[State](State.begin),
-      mainExecutor,
+      peersThreadPool,
       scheduledExecutorService,
       numberOfPieces
     )

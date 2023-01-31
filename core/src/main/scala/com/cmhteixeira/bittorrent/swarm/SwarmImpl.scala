@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.swarm
 
-import com.cmhteixeira.bittorrent.swarm.State.{PeerState, Pieces}
+import com.cmhteixeira.bittorrent.peerprotocol.Peer
+import com.cmhteixeira.bittorrent.swarm.State.{BlockState, PeerState, Pieces}
 import com.cmhteixeira.bittorrent.swarm.Swarm.Tried
 import com.cmhteixeira.bittorrent.tracker.Tracker
 
@@ -30,12 +31,25 @@ private[bittorrent] class SwarmImpl private (
       case (peerSocket, State.Active(peer)) => peerSocket -> Swarm.On(peer.getState)
     }
 
-  override def pieces: List[State.PieceState] =
-    thePieces.get().underlying.map { case (_, state) => state }
+  override def pieces: List[Swarm.PieceState] =
+    thePieces.get().underlying.map {
+      case (_, State.Downloading(_, blocks)) =>
+        Swarm.Downloading(
+          blocks.size,
+          blocks.count {
+            case (_, BlockState.WrittenToFile) => true
+            case _ => false
+          }
+        )
+      case (_, State.Downloaded(path)) => Swarm.Downloaded(path)
+      case (_, State.Missing) => Swarm.Missing
+    }
   override def close: Unit = println("Closing this and that")
 }
 
 object SwarmImpl {
+
+  type PeerFactory = InetSocketAddress => Peer
 
   def apply(
       tracker: Tracker,

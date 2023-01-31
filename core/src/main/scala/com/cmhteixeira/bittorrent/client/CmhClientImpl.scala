@@ -2,8 +2,9 @@ package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.{bencode, bittorrent}
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.swarm.Swarm
-import com.cmhteixeira.bittorrent.swarm.{Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.{HandShaked, TcpConnected}
+import com.cmhteixeira.bittorrent.swarm.Swarm.{On, Tried}
+import com.cmhteixeira.bittorrent.swarm.{State, Swarm, Torrent => SwarmTorrent}
 
 import java.nio.file.{Files, Path}
 import java.util.concurrent.atomic.AtomicReference
@@ -68,7 +69,31 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
         else Future.successful(Path.of("asd"))
     }
   }
-  override def listTorrents: List[InfoHash] = torrents.get().keys.toList
+
+  override def listTorrents: List[CmhClient.TorrentDetails] =
+    torrents
+      .get()
+      .map {
+        case (hash, swarm) =>
+          val pieces = swarm.pieces
+          val piecesDownloaded = pieces.count {
+            case Swarm.Downloaded(_) => true
+            case _ => false
+          }
+          val peersTried = swarm.peers.size
+          val peersActive = swarm.peers.count {
+            case (_, On(_: HandShaked)) => true
+            case _ => false
+          }
+          val peersConnectedNotHandshaked = swarm.peers.count {
+            case (_, On(TcpConnected)) => true
+            case _ => false
+          }
+
+          CmhClient
+            .TorrentDetails(hash, piecesDownloaded, pieces.size, peersActive, peersConnectedNotHandshaked, peersTried)
+      }
+      .toList
 
   override def stopAll: Unit = {
     logger.info("Shutting down.")

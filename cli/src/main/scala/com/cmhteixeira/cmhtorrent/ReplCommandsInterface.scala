@@ -3,8 +3,8 @@ package com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.bittorrent.client.CmhClient
 import org.jline.builtins.Completers.OptionCompleter
 import org.jline.builtins.{Options, SyntaxHighlighter}
-import org.jline.console.impl.JlineCommandRegistry
-import org.jline.console.{CommandInput, CommandMethods, CommandRegistry}
+import org.jline.console.impl.{DefaultPrinter, JlineCommandRegistry}
+import org.jline.console.{CommandInput, CommandMethods, CommandRegistry, Printer}
 import org.jline.reader.{Completer, LineReader}
 import org.jline.reader.impl.completer.{ArgumentCompleter, NullCompleter, StringsCompleter}
 import org.jline.terminal.Terminal
@@ -16,7 +16,7 @@ import scala.collection.JavaConverters.seqAsJavaList
 import scala.collection.JavaConverters.collectionAsScalaIterable
 import scala.util.Try
 
-class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDir: Path)
+class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDir: Path, printer: Printer)
     extends JlineCommandRegistry
     with CommandRegistry {
 
@@ -50,8 +50,10 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val opt: Iterable[String] = collectionAsScalaIterable(parseOptions(usage, input.xargs()).args())
 
     if (opt.isEmpty) {
-      val res = torrentClient.listTorrents.mkString(", ")
-      syntaxHighlighter.highlight(new AttributedString(res, new AttributedStyle().background(7))).println(terminal())
+      testprint
+////      val res = torrentClient.listTorrents.mkString(", ")
+//      val res = ""
+//      syntaxHighlighter.highlight(new AttributedString(res, new AttributedStyle().background(7))).println(terminal())
     } else
       terminal().writer().println("Command takes no arguments.")
   }
@@ -77,6 +79,47 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       .println(
         s"Details. Arguments are: [${collectionAsScalaIterable(args).mkString(", ")}]. Download dir: '$options'."
       )
+  }
+
+  private def testprint: Unit = {
+    val torrentDetails = torrentClient.listTorrents
+//    val foo = torrentDetails
+    val options = mapAsJavaMap(
+      Map(
+        Printer.COLUMNS -> seqAsJavaList(List("hash", "piecesDownloaded", "peersOn", "peersInactive")),
+//        Printer.SHORT_NAMES -> true
+      )
+    ): java.util.Map[String, AnyRef]
+
+    val data = seqAsJavaList(torrentDetails.map {
+      case CmhClient
+            .TorrentDetails(hash, piecesDownloaded, piecesTotal, peersOn, peersConnectedNotActive, peersTotal) =>
+        mapAsJavaMap(
+          Map(
+            "hash" -> hash.hex,
+            "piecesDownloaded" -> s"$piecesDownloaded/$piecesTotal",
+            "peersOn" -> s"$peersOn/$peersTotal",
+            "peersInactive" -> s"$peersConnectedNotActive/$peersTotal"
+          )
+        ): java.util.Map[String, AnyRef]
+    })
+
+    printer.println(options, data)
+
+//    List<Map<String,Object>> data = new ArrayList<>();
+//    data.add(fillMap("heikki", 10, "finland", "helsinki"));
+//    data.add(fillMap("pietro", 11, "italy", "milano"));
+//    data.add(fillMap("john", 12, "england", "london"));
+//    printer.println(data);
+//    Map<String,Object> options = new HashMap<>();
+//    options.put(Printer.STRUCT_ON_TABLE, true);
+//    options.put(Printer.VALUE_STYLE, "classpath:/org/jline/example/gron.nanorc");
+//    printer.println(options,data);
+//    options.clear();
+//    options.put(Printer.COLUMNS, Arrays.asList("name", "age", "address.country", "address.town"));
+//    options.put(Printer.SHORT_NAMES, true);
+//    options.put(Printer.VALUE_STYLE, "classpath:/org/jline/example/gron.nanorc");
+//    printer.println(options,data);
   }
 
   private def detailsCompleter(command: String): java.util.List[Completer] = ???
@@ -281,5 +324,5 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 object ReplCommandsInterface {
 
   def apply(cmhClient: CmhClient, defaultDir: Path): ReplCommandsInterface =
-    new ReplCommandsInterface(cmhClient, defaultDir)
+    new ReplCommandsInterface(cmhClient, defaultDir, new DefaultPrinter(null)) //todo: Fix this
 }

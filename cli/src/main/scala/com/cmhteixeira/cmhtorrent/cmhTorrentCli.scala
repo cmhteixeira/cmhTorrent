@@ -47,9 +47,18 @@ object cmhTorrentCli extends App {
   private val swarmFactory =
     SwarmFactoryImpl(
       random = new SecureRandom(),
-      peerConfig = PeerImpl.Config(1000, peerId),
       scheduler = scheduler("swarm-", 4),
       mainExecutor = global,
+      peerFactoryFactory = swarmTorrent =>
+        inetSocketAddress =>
+          PeerImpl(
+            peerSocket = inetSocketAddress,
+            config = PeerImpl.Config(1000, peerId),
+            infoHash = swarmTorrent.infoHash,
+            peersThreadPool = peersThreadPool,
+            scheduledExecutorService = scheduler("Peer-", 3),
+            numberOfPieces = swarmTorrent.info.pieces.size
+          ),
       tracker = tracker
     )
 
