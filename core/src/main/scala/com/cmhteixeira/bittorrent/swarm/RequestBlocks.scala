@@ -93,7 +93,7 @@ private[swarm] class RequestBlocks private (
           .map { case (offset, len) => BlockRequest(pieceIndex, offset, len) }
 
         val filePath = fileName(pieceIndex)
-        val backingFile = PieceFileImpl(filePath)
+        val backingFile = PieceFileImpl(filePath).get //todo: This can throw
         val sizeFile = torrent.pieceSize(pieceIndex)
         logger.info(s"Creating file '${filePath.toAbsolutePath}' for piece $pieceIndex with $sizeFile bytes.")
         Try(backingFile.write(new Array[Byte](sizeFile))) match {

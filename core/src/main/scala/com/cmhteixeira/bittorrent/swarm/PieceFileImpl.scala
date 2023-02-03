@@ -1,7 +1,7 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import java.io.RandomAccessFile
-import java.nio.file.Path
+import java.nio.file.{Files, Path}
 import scala.util.Try
 
 private[swarm] class PieceFileImpl private (raf: RandomAccessFile, thePath: Path) extends PieceFile {
@@ -14,5 +14,11 @@ private[swarm] class PieceFileImpl private (raf: RandomAccessFile, thePath: Path
 
 private[swarm] object PieceFileImpl {
 
-  def apply(path: Path): PieceFileImpl = new PieceFileImpl(new RandomAccessFile(path.toFile, "rw"), path)
+  def apply(path: Path): Try[PieceFileImpl] = {
+    for {
+      _ <- Try(Files.createDirectories(path.getParent))
+      raf <- Try(new RandomAccessFile(path.toFile, "rw"))
+    } yield new PieceFileImpl(raf, path)
+
+  }
 }
