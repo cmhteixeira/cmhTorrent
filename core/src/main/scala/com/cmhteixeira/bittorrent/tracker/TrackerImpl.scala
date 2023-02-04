@@ -102,6 +102,7 @@ private[tracker] final class TrackerImpl private (
       port = 8081 // parametrize this
     )
 
+    logger.info(s"Sending announce for infoHash $infoHash.")
     val payload = announceRequest.serialize
     Try(socket.send(new DatagramPacket(payload, payload.length, trackerSocket)))
   }

@@ -3,8 +3,8 @@ package com.cmhteixeira.bittorrent.client
 import com.cmhteixeira.{bencode, bittorrent}
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.{HandShaked, TcpConnected}
-import com.cmhteixeira.bittorrent.swarm.Swarm.{On, Tried}
-import com.cmhteixeira.bittorrent.swarm.{State, Swarm, Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.swarm.Swarm.On
+import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
 
 import java.nio.file.{Files, Path}
 import java.util.concurrent.atomic.AtomicReference
@@ -44,15 +44,16 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
   private def parseTorrentFromFile(path: Path): Either[String, SwarmTorrent] =
     for {
       a <- bencode.parse(Files.readAllBytes(path)).left.map(_ => "ERROR parsing")
+      info <- a.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
       torrent <- a.as[Torrent].left.map(_.toString)
-      swarmTorrent <- SwarmTorrent(InfoHash(a), torrent)
+      swarmTorrent <- SwarmTorrent(InfoHash(info), torrent)
     } yield swarmTorrent
 
   override def piecesStatus(infoHash: bittorrent.InfoHash): Any = ???
 
   override def peerStatus(infoHash: bittorrent.InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]] =
     torrents.get().get(infoHash).map { swarm =>
-      swarm.peers
+      swarm.getPeers
     }
 
   override def stop(t: bittorrent.InfoHash): Boolean = ???
@@ -75,17 +76,17 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
       .get()
       .map {
         case (hash, swarm) =>
-          val pieces = swarm.pieces
+          val pieces = swarm.getPieces
           val piecesDownloaded = pieces.count {
             case Swarm.Downloaded(_) => true
             case _ => false
           }
-          val peersTried = swarm.peers.size
-          val peersActive = swarm.peers.count {
+          val peersTried = swarm.getPeers.size
+          val peersActive = swarm.getPeers.count {
             case (_, On(_: HandShaked)) => true
             case _ => false
           }
-          val peersConnectedNotHandshaked = swarm.peers.count {
+          val peersConnectedNotHandshaked = swarm.getPeers.count {
             case (_, On(TcpConnected)) => true
             case _ => false
           }

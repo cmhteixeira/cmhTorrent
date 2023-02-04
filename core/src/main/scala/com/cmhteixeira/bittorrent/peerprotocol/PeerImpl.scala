@@ -213,7 +213,7 @@ private[peerprotocol] final class PeerImpl private (
     }
   }
 
-  override def disconnect: Unit = {
+  override def disconnect(): Unit = {
     logger.info("Disconnecting.")
     setError(IDisconnected)
   }

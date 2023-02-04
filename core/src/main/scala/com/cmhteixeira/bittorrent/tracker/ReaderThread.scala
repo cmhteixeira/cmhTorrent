@@ -48,7 +48,7 @@ private[tracker] class ReaderThread private (
             s"Received packet from '${i.getSocketAddress}' with $payloadSize bytes, but couldn't be deserialized into an Announce response: '$value'."
           logger.warn(msg)
         case Right(announceResponse) =>
-          logger.info(s"Received potential Announce response from '${i.getSocketAddress}'")
+          logger.info(s"Received potential Announce response from '${i.getSocketAddress}' with $payloadSize bytes.")
           processAnnounce(i.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
       }
     } else

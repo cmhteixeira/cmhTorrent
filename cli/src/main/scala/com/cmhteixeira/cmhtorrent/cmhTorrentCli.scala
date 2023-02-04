@@ -39,7 +39,7 @@ object cmhTorrentCli extends App {
 
   private val tracker = TrackerImpl(
     global,
-    scheduler("tracker", 10),
+    scheduler("tracker", 20),
     RandomTransactionIdGenerator(SecureRandom.getInstanceStrong),
     TrackerImpl.Config(port = 8083, peerId = peerId, key = 123)
   )

@@ -22,10 +22,10 @@ sealed trait Bencode {
 
   def asList: Option[List[Bencode]]
 
-  def asDict: Option[Map[BByteString, Bencode]]
+  def asDict: Option[BDictionary]
 
   def merge(that: Bencode): Bencode =
-    (this.asDict, that.asDict) match {
+    (this.asDict.map(_.underlying), that.asDict.map(_.underlying)) match {
       case (Some(theThis), Some(theThat)) => BDictionary(theThis ++ theThat) // todo: how to deal with duplicate keys?
       case _ => that
     }
@@ -43,8 +43,7 @@ object Bencode {
     override def asList: Option[List[Bencode]] = None
     override def asLong: Option[Long] = Some(underlying)
 
-    override def asDict: Option[Map[BByteString, Bencode]] =
-      None
+    override def asDict: Option[BDictionary] = None
     override def toPrettyString(tab: String): String = s"l${underlying}e"
   }
 
@@ -54,7 +53,7 @@ object Bencode {
     override def asList: Option[List[Bencode]] = None
     override def asLong: Option[Long] = None
 
-    override def asDict: Option[Map[BByteString, Bencode]] =
+    override def asDict: Option[BDictionary] =
       None
 
     override def toPrettyString(tab: String): String =
@@ -67,7 +66,7 @@ object Bencode {
     override def asList: Option[List[Bencode]] = Some(underlying)
     override def asLong: Option[Long] = None
 
-    override def asDict: Option[Map[BByteString, Bencode]] =
+    override def asDict: Option[BDictionary] =
       None
 
     override def toPrettyString(tab: String): String = {
@@ -108,8 +107,7 @@ object Bencode {
     override def asList: Option[List[Bencode]] = None
     override def asLong: Option[Long] = None
 
-    override def asDict: Option[Map[BByteString, Bencode]] =
-      Some(underlying)
+    override def asDict: Option[BDictionary] = Some(this)
 
     override def toPrettyString(tab: String): String = {
 

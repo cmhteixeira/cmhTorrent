@@ -82,6 +82,12 @@ private[swarm] object State {
     def index(idx: Int): Option[PieceState] =
       underlying.lift(idx).map(_._2)
 
+    /** Missing blocks of pieces that are being downloaded.
+     *
+     * Does not return missing blocks of pieces whose download hasn't started.
+     *
+     * @return Missing blocks of pieces that are being downloaded.
+     */
     def missingBlocksOfStartedPieces: List[BlockRequest] =
       underlying.collect {
         case (_, Downloading(_, blocks)) => blocks.collect { case (blockR, BlockState.Missing) => blockR }
