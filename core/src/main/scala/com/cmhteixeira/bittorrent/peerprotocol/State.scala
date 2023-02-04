@@ -37,6 +37,8 @@ private[peerprotocol] object State {
     case object ReadThreadSeesBeginState extends Error
     case class ImpossibleToScheduleKeepAlives(error: Throwable) extends Error
     case class ImpossibleState(currentState: State, msg: String) extends Error
+
+    case object IDisconnected extends Error
   }
 
   def begin = Begin

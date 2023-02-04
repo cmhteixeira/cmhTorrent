@@ -18,6 +18,8 @@ trait Peer {
 
   def hasPiece(index: Int): Boolean
 
+  def disconnect: Unit
+
 }
 
 object Peer {

@@ -61,11 +61,13 @@ object CmhTorrentREPL {
     terminal
   }
 
-  private def setUpRegistry(terminal: Terminal, parser: Parser, workingDir: Path) = {
+  private def setUpRegistry(terminal: Terminal, parser: Parser, workingDir: Path, cmhClient: CmhClient) = {
     val configPath: ConfigurationPath = new ConfigurationPath(workingDir, workingDir);
 
     val systemRegistry: SystemRegistryImpl =
-      new SystemRegistryImpl(parser, terminal, () => workingDir, configPath)
+      new SystemRegistryImpl(parser, terminal, () => workingDir, configPath) {
+        override def close(): Unit = cmhClient.stopAll
+      }
     systemRegistry
   }
 
@@ -103,7 +105,7 @@ object CmhTorrentREPL {
 
     val parser = setUpParser
     val terminal = setUpTerminal
-    val registry = setUpRegistry(terminal, parser, config.workingDir)
+    val registry = setUpRegistry(terminal, parser, config.workingDir, client)
     val replInterface = setMyCommands(client, registry, config.workingDir)
     val lineReader = setLineReader(terminal, registry, parser, config.historyPath)
     replInterface.setLineReader(lineReader)

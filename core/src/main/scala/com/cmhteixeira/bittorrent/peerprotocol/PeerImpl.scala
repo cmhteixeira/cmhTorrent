@@ -6,6 +6,7 @@ import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Config
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
 import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
 import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
+  IDisconnected,
   ImpossibleState,
   ImpossibleToScheduleKeepAlives,
   SendingHaveOrAmInterestedMessage,
@@ -69,9 +70,11 @@ private[peerprotocol] final class PeerImpl private (
         if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
           registerKeepAliveTask(keepAliveTask)
       case TerminalError(_, error) =>
+        keepAliveTask.cancel(true)
         logger.warn(s"Not scheduling keep-alive tasks as peer in Terminal error state: '$error'.")
       case state =>
         logger.warn(s"This state should be impossible at the stage of scheduling keep-alive tasks: '$state'.")
+        keepAliveTask.cancel(true)
         setError(ImpossibleState(state, "This state should be impossible at the stage of scheduling keep-alive tasks"))
         socket.close()
     }
@@ -208,6 +211,11 @@ private[peerprotocol] final class PeerImpl private (
         }
       case _: TerminalError => ()
     }
+  }
+
+  override def disconnect: Unit = {
+    logger.info("Disconnecting.")
+    setError(IDisconnected)
   }
 }
 

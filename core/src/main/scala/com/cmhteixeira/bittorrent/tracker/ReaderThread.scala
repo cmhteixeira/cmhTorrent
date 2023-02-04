@@ -99,7 +99,9 @@ private[tracker] class ReaderThread private (
 
         if (!state.compareAndSet(currentState, newState)) processAnnounce(origin, announceResponse)
         else
-          logger.info(s"Received Announce response from '$origin' for torrent '$infoHash' with txnId: '$txnId'")
+          logger.info(
+            s"Received Announce response from '$origin' for torrent '$infoHash' with txnId. '$txnId': ${announceResponse.peers.size} peers."
+          )
     }
   }
 }
