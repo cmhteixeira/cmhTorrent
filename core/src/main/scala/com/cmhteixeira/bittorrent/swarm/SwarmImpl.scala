@@ -118,15 +118,15 @@ private[bittorrent] class SwarmImpl private (
 
   private def timeout[A](fut: Future[A]): Future[A] = {
     val promise = Promise[A]()
-    scheduler.schedule(
-      new Runnable { override def run(): Unit = promise.failure(new TimeoutException("Timeout after 30 seconds.")) },
+    scheduler.schedule( //todo: Check if usage of try-complete is appropriate
+      new Runnable { override def run(): Unit = promise.tryFailure(new TimeoutException("Timeout after 30 seconds.")) },
       30,
       TimeUnit.SECONDS
     )
-    fut.onComplete {
-      case Failure(exception) => promise.failure(exception)
-      case Success(value) => promise.success(value)
-    }(mainExecutor)
+
+    fut.onComplete(promise.tryComplete)(
+      mainExecutor
+    ) //todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
     promise.future
   }
 

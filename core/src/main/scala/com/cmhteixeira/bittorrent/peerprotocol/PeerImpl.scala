@@ -152,8 +152,8 @@ private[peerprotocol] final class PeerImpl private (
                   val msg = s"Requesting block. Piece: $index, offset: $offSet, length: $lengthBlock."
                   val error = new Exception(msg, exception)
                   logger.warn(msg, error)
+                  channel.failure(error) // this needs to be before next line, or else we need .tryFailure instead.
                   setError(SendingHaveOrAmInterestedMessage(exception))
-                  channel.failure(error)
                   channel.future
                 case Success(_) =>
                   logger.info(s"Sent request for block. Piece: $index, offset: $offSet, length: $lengthBlock.")
@@ -197,8 +197,8 @@ private[peerprotocol] final class PeerImpl private (
           }
           logger.info("???")
           handshaked.me.requests.collect {
-            case (_, Sent(promiseCompletion)) =>
-              promiseCompletion.failure(new Exception(s"Impossible to complete: $msg."))
+            case (_, Sent(promiseCompletion)) => //todo: Check if usage of try-complete is appropriate
+              promiseCompletion.tryFailure(new Exception(s"Impossible to complete: $msg."))
           }
           socket.close()
         }

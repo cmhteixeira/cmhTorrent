@@ -61,8 +61,11 @@ private[peerprotocol] class ReadThread private (
               value.cancel(false)
             case None => logger.info("No keep alive tasks to cancel.")
           }
-          logger.info("???")
-          handshaked.me.requests.collect { case (_, Sent(promiseCompletion)) => promiseCompletion.failure(new Exception(s"Impossible to complete: $msg.")) }
+          logger.info("???") //todo: Check if usage of try-complete is appropriate
+          handshaked.me.requests.collect {
+            case (_, Sent(promiseCompletion)) =>
+              promiseCompletion.tryFailure(new Exception(s"Impossible to complete: $msg."))
+          }
           socket.close()
         }
       case goodState: Good =>
@@ -149,7 +152,7 @@ private[peerprotocol] class ReadThread private (
           case Some(Sent(channel)) =>
             val newState = handshaked.received(blockRequest)
             if (!state.compareAndSet(currentState, newState)) appendBlock(pieceIndex, offSet, block)
-            else channel.success(ByteVector(block))
+            else channel.trySuccess(ByteVector(block)) //todo: Check if usage of try-complete is appropriate
           case Some(Received) => logger.warn("Weird....")
           case None =>
             logger.warn(s"Received unregistered block for piece $pieceIndex. Offset: $offSet, length: ${block.length}")

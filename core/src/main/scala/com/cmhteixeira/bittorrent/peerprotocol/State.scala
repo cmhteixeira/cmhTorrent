@@ -58,7 +58,7 @@ private[peerprotocol] object State {
 
   case object Begin extends Good {
 
-    def connected = TcpConnected
+    def connected(promise: Promise[Unit]) = TcpConnected(promise)
 
   }
 
