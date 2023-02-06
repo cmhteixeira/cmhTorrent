@@ -2,13 +2,16 @@ package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
-import com.cmhteixeira.bittorrent.swarm.State.{Active, BlockState, Downloading, Missing, PeerState, Pieces}
+import com.cmhteixeira.bittorrent.swarm.State.PieceState.BlockState.Asked
+import com.cmhteixeira.bittorrent.swarm.State.PieceState._
+import com.cmhteixeira.bittorrent.swarm.State.{Active, PeerState, Pieces}
 import com.cmhteixeira.bittorrent.swarm.Swarm.Tried
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.maxBlocksAtOnce
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
@@ -33,7 +36,7 @@ private[bittorrent] class SwarmImpl private (
   tracker.submit(torrent.toTrackerTorrent)
   scheduler.scheduleAtFixedRate(upsertPeers, 0, 10, TimeUnit.SECONDS)
 
-  run()
+  mainExecutor.execute(new Runnable { def run(): Unit = updatePieces() })
 
   override def downloadCompleted: Future[Path] = ???
 
@@ -45,7 +48,7 @@ private[bittorrent] class SwarmImpl private (
 
   override def getPieces: List[Swarm.PieceState] =
     pieces.get().underlying.map {
-      case (_, State.Downloading(_, blocks)) =>
+      case (_, State.PieceState.Downloading(_, blocks)) =>
         Swarm.Downloading(
           blocks.size,
           blocks.count {
@@ -53,66 +56,106 @@ private[bittorrent] class SwarmImpl private (
             case _ => false
           }
         )
-      case (_, State.Downloaded(path)) => Swarm.Downloaded(path)
-      case (_, State.Missing) => Swarm.Missing
+      case (_, State.PieceState.Downloaded(path)) => Swarm.Downloaded(path)
+      case (_, State.PieceState.Missing) => Swarm.Missing
+      case (_, State.PieceState.MarkedForDownload) => Swarm.Missing
     }
   override def close: Unit = println("Closing this and that")
 
-  private def run(): Unit =
-    Try {
-      logger.info("Updating pieces ...")
-      updatePieces()
-    } match {
-      case Failure(exception) => logger.error("Updating pieces.", exception)
-      case Success(_) => logger.info("Completed updating pieces.")
-    }
-
+  @tailrec
   private def updatePieces(): Unit = {
     val currentState = pieces.get()
     val numBlocksDownloading = currentState.numBlocksDownloading
-    if (numBlocksDownloading >= maxBlocksAtOnce)
-      logger.info(s"Downloading $numBlocksDownloading blocks already. Waiting until some finish.")
-    else (1 to maxBlocksAtOnce - numBlocksDownloading).foreach(_ => downloadNewBlock())
-  }
+    if (numBlocksDownloading >= maxBlocksAtOnce) logger.info(s"Downloading $numBlocksDownloading blocks already.")
+    else {
+      val missingBlocks = currentState.missingBlocks
+      val blocksToDownload = maxBlocksAtOnce - numBlocksDownloading
+      val numBlocksExistingPieces = math.min(missingBlocks.size, blocksToDownload)
+      val numBlocksNewPieces = blocksToDownload - numBlocksExistingPieces
+      logger.info(
+        s"Missing blocks: ${missingBlocks.size}. Blocks to download: $blocksToDownload. Existing Pieces: $numBlocksExistingPieces. NewPieces: $numBlocksNewPieces"
+      )
+      val newPieces = randomGen
+        .shuffle(currentState.missingPieces)
+        .map(a => a -> torrent.splitInBlocks(a, config.blockSize))
+        .foldLeft[List[(Int, List[(BlockRequest, Boolean)])]](List.empty) {
+          case (acc, (pieceIndex, blockPartition)) =>
+            val blockRequests = blockPartition.map { case (offSet, len) => BlockRequest(pieceIndex, offSet, len) }
+            val totalNewBlocks = acc.flatMap(_._2).size
+            if (totalNewBlocks >= numBlocksNewPieces) acc
+            else {
+              val blocks = math.min(blockRequests.size, numBlocksNewPieces - totalNewBlocks)
+              val (toDownloadNow, toDownloadLater) = blockRequests.splitAt(blocks)
+              acc :+ (pieceIndex, toDownloadNow.map(_ -> true) ::: toDownloadLater.map(_ -> false))
+            }
+        }
 
-  @tailrec
-  private def downloadNewBlock(): Unit =
-    pieces.get().missingBlocksOfStartedPieces.headOption match {
-      case Some(blockR) => downloadBlock(blockR)
-      case None =>
-        if (processNewPiece()) downloadNewBlock()
-    }
-
-  private def downloadBlock(blockR: BlockRequest): Unit = {
-    val currentPeers = peers.get()
-    val pieceIndex = blockR.index
-    val peersHave = currentPeers.collect { case (_, Active(peer)) if peer.hasPiece(pieceIndex) => peer }.toList
-    if (peersHave.isEmpty) {
-      logger.info(s"Trying to download '$blockR'. No peer has piece.")
-      Thread.sleep(1000) // todo: How to fix this?
-      downloadNewBlock()
-    } else {
-      val (_, peer) = peersHave.lift(randomGen.nextInt(peersHave.size)).map(pieceIndex -> _).get
-      val eventualBlock = timeout(peer.download(blockR))
-      editStateBlockR(blockR, eventualBlock) match {
-        case Left(value) =>
-          logger.error(s"Error registering new block download: '$value'")
-          updatePieces()
-        case Right(pieceFile) => onceBlockArrives(pieceFile, blockR, eventualBlock)
+      val newBlocks = randomGen.shuffle(missingBlocks).take(numBlocksExistingPieces)
+      (for {
+        state1 <- currentState.markBlocksForDownload(newBlocks.map(_._2))
+        state2 <- state1.markPiecesForDownload(newPieces.map(_._1))
+      } yield state2) match {
+        case Left(value) => logger.warn(s"No downloading of new pieces: $value")
+        case Right(newState) =>
+          if (!pieces.compareAndSet(currentState, newState)) updatePieces()
+          else {
+            newBlocks.foreach { case (pieceFile, blockRequest) => downloadBlock(pieceFile, blockRequest) }
+            newPieces.foreach {
+              case (pieceIndex, blocks) =>
+                createNewPiece(pieceIndex, blocks) match {
+                  case Failure(exception) => logger.warn("OMG. what is this", exception)
+                  case Success(pieceFile) =>
+                    blocks.foreach {
+                      case (blockRequest, shouldDownload) =>
+                        if (shouldDownload) downloadBlock(pieceFile, blockRequest)
+                    }
+                }
+            }
+          }
       }
     }
   }
 
-  private def editStateBlockR(
-      blockRequest: BlockRequest,
-      eventualBlock: Future[ByteVector]
-  ): Either[Pieces.Error, PieceFile] = {
+  private def createNewPiece(pieceIndex: Int, blocksToDownload: List[(BlockRequest, Boolean)]): Try[PieceFile] = {
     val currentState = pieces.get()
-    currentState.askNewBlock(blockRequest) match {
-      case Left(error) => Left(error)
-      case Right((Downloading(pieceFile, _), newState)) =>
-        if (!pieces.compareAndSet(currentState, newState)) editStateBlockR(blockRequest, eventualBlock)
-        else Right(pieceFile)
+    val filePath = fileName(pieceIndex)
+    val sizeFile = torrent.pieceSize(pieceIndex)
+    logger.info(s"Creating file '${filePath.toAbsolutePath}' for piece $pieceIndex with $sizeFile bytes.")
+
+    (for {
+      backingFile <- PieceFileImpl(filePath)
+      _ <- backingFile.write(new Array[Byte](sizeFile))
+    } yield backingFile) match {
+      case Failure(exception) =>
+        val msg = s"Creating file '$filePath' for piece $pieceIndex"
+        logger.warn(msg, exception)
+        Failure(new IOException(msg, exception))
+      case Success(pieceFile) =>
+        val newState = currentState.updateState(
+          pieceIndex,
+          Downloading(
+            file = pieceFile,
+            blocks = blocksToDownload.map {
+              case (blockRequest, downloadNow) =>
+                if (downloadNow) blockRequest -> Asked
+                else blockRequest -> BlockState.Missing
+            }.toMap
+          )
+        )
+        if (!pieces.compareAndSet(currentState, newState)) createNewPiece(pieceIndex, blocksToDownload)
+        else Success(pieceFile)
+    }
+  }
+
+  private def downloadBlock(pieceFile: PieceFile, blockR: BlockRequest): Unit = {
+    val relevantPeers = peers.get().collect { case (_, Active(peer)) if peer.hasPiece(blockR.index) => peer }.toList
+    randomGen.shuffle(relevantPeers) match {
+      case Nil =>
+        logger.info(s"Trying to download '$blockR'. No peer has piece.")
+        markAsMissing(blockR)
+        // todo: Can this lead to too many recursive calls will lead to StackOverflow.
+        scheduler.schedule(new Runnable { def run(): Unit = updatePieces() }, 60, TimeUnit.SECONDS)
+      case headPeer :: xs => onceBlockArrives(pieceFile, blockR, timeout(headPeer.download(blockR)))
     }
   }
 
@@ -128,44 +171,6 @@ private[bittorrent] class SwarmImpl private (
       mainExecutor
     ) //todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
     promise.future
-  }
-
-  private def processNewPiece(): Boolean = {
-    val currentState = pieces.get()
-    currentState.missingPieces.headOption match {
-      case Some(pieceIndex) =>
-        val allBlocks = torrent
-          .splitInBlocks(pieceIndex, config.blockSize)
-          .map { case (offset, len) => BlockRequest(pieceIndex, offset, len) }
-
-        val filePath = fileName(pieceIndex)
-        val sizeFile = torrent.pieceSize(pieceIndex)
-        logger.info(s"Creating file '${filePath.toAbsolutePath}' for piece $pieceIndex with $sizeFile bytes.")
-
-        val newState = (for {
-          backingFile <- PieceFileImpl(filePath)
-          _ <- backingFile.write(new Array[Byte](sizeFile))
-        } yield backingFile) match {
-          case Failure(exception) =>
-            logger.info(s"Creating file '$filePath' for piece $pieceIndex.", exception)
-            currentState.updateState(pieceIndex, Missing)
-          case Success(pieceFile) =>
-            currentState.updateState(
-              pieceIndex,
-              Downloading(pieceFile, allBlocks.map(blockRequest => blockRequest -> BlockState.Missing).toMap)
-            )
-        }
-
-        if (!pieces.compareAndSet(currentState, newState)) processNewPiece()
-        else {
-          logger.info(s"Started downloading piece $pieceIndex.")
-          true
-        }
-
-      case None =>
-        logger.warn("No pieces left to download.")
-        false
-    }
   }
 
   private def onceBlockArrives(

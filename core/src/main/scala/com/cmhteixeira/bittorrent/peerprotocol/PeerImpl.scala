@@ -21,7 +21,7 @@ import com.cmhteixeira.bittorrent.peerprotocol.State.{
   TerminalError
 }
 import org.slf4j.{Logger, LoggerFactory}
-import scodec.bits.ByteVector
+import scodec.bits.{BitVector, ByteVector}
 
 import java.net._
 import java.nio.ByteBuffer
@@ -152,7 +152,7 @@ private[peerprotocol] final class PeerImpl private (
                   val msg = s"Requesting block. Piece: $index, offset: $offSet, length: $lengthBlock."
                   val error = new Exception(msg, exception)
                   logger.warn(msg, error)
-                  channel.failure(error) // this needs to be before next line, or else we need .tryFailure instead.
+                  channel.tryFailure(error)
                   setError(SendingHaveOrAmInterestedMessage(exception))
                   channel.future
                 case Success(_) =>
@@ -173,12 +173,17 @@ private[peerprotocol] final class PeerImpl private (
   private def requestPiece(request: Request): Try[Unit] =
     Try(socket.getOutputStream.write(request.serialize))
 
-  override def hasPiece(index: Int): Boolean = {
+  override def hasPiece(index: Int): Boolean =
     state.get() match {
       case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField.get(index)
       case _ => false
     }
-  }
+
+  override def pieces: BitVector =
+    state.get() match {
+      case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField
+      case _ => BitVector.low(numberOfPieces)
+    }
 
   @tailrec
   private def setError(msg: TerminalError.Error): Unit = {
@@ -217,6 +222,7 @@ private[peerprotocol] final class PeerImpl private (
     logger.info("Disconnecting.")
     setError(IDisconnected)
   }
+
 }
 
 object PeerImpl {

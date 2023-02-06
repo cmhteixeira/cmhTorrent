@@ -1,8 +1,10 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
+import cats.implicits.toTraverseOps
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
+import com.cmhteixeira.bittorrent.swarm.State.PieceState._
 import com.cmhteixeira.cmhtorrent.PieceHash
 
 import java.nio.file.Path
@@ -38,18 +40,20 @@ private[swarm] object State {
         case (acc, _) => acc
       }
 
-    def askNewBlock(blockRequest: BlockRequest): Either[Pieces.Error, (Downloading, Pieces)] = {
+    def markBlockForDownload(blockRequest: BlockRequest) =
       underlying.lift(blockRequest.index) match {
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
         case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
+        case Some((_, MarkedForDownload)) =>
+          Left(Pieces.OmgError(s"Piece ${blockRequest.index} still marked for download."))
         case Some((_, d @ Downloading(_, blocks))) =>
           val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
           Right(newState, updateState(blockRequest.index, newState))
           blocks.get(blockRequest) match {
             case Some(BlockState.Missing) =>
               val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
-              Right(newState, updateState(blockRequest.index, newState))
+              Right(updateState(blockRequest.index, newState))
             case Some(BlockState.Asked) =>
               Left(Pieces.OmgError(s"Block $blockRequest already asked."))
             case Some(BlockState.WrittenToFile) =>
@@ -58,13 +62,43 @@ private[swarm] object State {
           }
         case None => Left(Pieces.OmgError(s"Piece index ${blockRequest.index} not found."))
       }
-    }
+
+    def markBlocksForDownload(blockRequests: List[BlockRequest]): Either[State.Pieces.OmgError, Pieces] =
+      blockRequests match {
+        case Nil => Right(this)
+        case ::(head, tl) =>
+          markBlockForDownload(head) match {
+            case Left(value) => Left(value)
+            case Right(value) => value.markBlocksForDownload(tl)
+          }
+      }
+
+    def markPiecesForDownload(indexes: List[Int]): Either[State.Pieces.OmgError, Pieces] =
+      indexes match {
+        case Nil => Right(this)
+        case ::(head, tl) =>
+          markPieceForDownload(head) match {
+            case Left(value) => Left(value)
+            case Right(value) => value.markPiecesForDownload(tl)
+          }
+      }
+
+    def markPieceForDownload(index: Int): Either[State.Pieces.OmgError, Pieces] =
+      underlying.lift(index) match {
+        case Some((_, Missing)) => Right(updateState(index, MarkedForDownload))
+        case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece $index already downloaded."))
+        case Some((_, _: Downloading)) => Left(Pieces.OmgError(s"Piece $index already being downloaded."))
+        case Some((_, MarkedForDownload)) => Left(Pieces.OmgError(s"Piece $index already marked for download."))
+        case None => Left(Pieces.OmgError(s"Piece index $index not found."))
+      }
 
     def maskAsMissing(blockRequest: BlockRequest): Either[Pieces.Error, Pieces] = {
       underlying.lift(blockRequest.index) match {
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
         case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
+        case Some((_, MarkedForDownload)) =>
+          Left(Pieces.OmgError(s"Piece ${blockRequest.index} is marked for download."))
         case Some((_, d @ Downloading(_, blocks))) =>
           blocks.get(blockRequest) match {
             case Some(BlockState.Missing) =>
@@ -83,14 +117,15 @@ private[swarm] object State {
       underlying.lift(idx).map(_._2)
 
     /** Missing blocks of pieces that are being downloaded.
-     *
-     * Does not return missing blocks of pieces whose download hasn't started.
-     *
-     * @return Missing blocks of pieces that are being downloaded.
-     */
-    def missingBlocksOfStartedPieces: List[BlockRequest] =
+      *
+      * Does not return missing blocks of pieces whose download hasn't started.
+      *
+      * @return Missing blocks of pieces that are being downloaded, alongside the associated file.
+      */
+    def missingBlocks: List[(PieceFile, BlockRequest)] =
       underlying.collect {
-        case (_, Downloading(_, blocks)) => blocks.collect { case (blockR, BlockState.Missing) => blockR }
+        case (_, Downloading(pieceFile, blocks)) =>
+          blocks.collect { case (blockR, BlockState.Missing) => (pieceFile, blockR) }
       }.flatten
 
     def blockCompleted(block: BlockRequest): Either[Pieces.Error, (Option[Path], Pieces)] = {
@@ -119,6 +154,7 @@ private[swarm] object State {
             case None => Left(Pieces.OmgError(s"Block $block not found."))
           }
         case Some((_, Downloaded(_))) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded."))
+        case Some((_, MarkedForDownload)) => Left(Pieces.OmgError(s"Piece index ${block.index} marked for download."))
         case None => Left(Pieces.OmgError(s"Piece index ${block.index} not found."))
       }
     }
@@ -133,19 +169,24 @@ private[swarm] object State {
 
   sealed trait PieceState extends Product with Serializable
 
-  case class Downloading(
-      file: PieceFile,
-      blocks: Map[BlockRequest, BlockState]
-  ) extends PieceState
+  object PieceState {
 
-  sealed trait BlockState
+    case class Downloading(
+        file: PieceFile,
+        blocks: Map[BlockRequest, BlockState]
+    ) extends PieceState
 
-  object BlockState {
-    case object Missing extends BlockState
-    case object Asked extends BlockState
-    case object WrittenToFile extends BlockState
+    case class Downloaded(location: Path) extends PieceState
+    case object Missing extends PieceState
+    case object MarkedForDownload extends PieceState
+
+    sealed trait BlockState
+
+    object BlockState {
+      case object Missing extends BlockState
+      case object Asked extends BlockState
+      case object WrittenToFile extends BlockState
+    }
   }
 
-  case class Downloaded(location: Path) extends PieceState
-  case object Missing extends PieceState
 }

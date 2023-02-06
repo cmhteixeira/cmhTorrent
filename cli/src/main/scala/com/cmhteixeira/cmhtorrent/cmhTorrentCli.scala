@@ -7,7 +7,7 @@ import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, Tracker
 
 import java.nio.file.Paths
 import java.security.SecureRandom
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.global
