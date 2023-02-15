@@ -7,6 +7,10 @@ import com.cmhteixeira.bittorrent.swarm.Torrent.{File, split}
 import com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.cmhtorrent.PieceHash
 import com.cmhteixeira.bittorrent.tracker.{Torrent => TrackerTorrent}
+import scodec.bits.ByteVector
+
+import scala.annotation.tailrec
+import java.nio.file.{Path, Paths}
 
 case class Torrent(
     infoHash: InfoHash,
@@ -28,9 +32,17 @@ case class Torrent(
   }
 
   def splitInBlocks(pieceIndex: Int, blockSize: Int): List[(Int, Int)] = split(pieceSize(pieceIndex), blockSize)
+
+  def fileForBlock(pieceIndex: Int, offset: Int, block: ByteVector): Option[NonEmptyList[Torrent.FileChunk]] =
+    info match {
+      case sF: Torrent.SingleFile => sF.fileForChunk(pieceIndex, offset, block).map(NonEmptyList.one)
+      case mF: Torrent.MultiFile => mF.fileForChunk(pieceIndex, offset, block)
+    }
 }
 
 object Torrent {
+
+  case class FileChunk(path: Path, offset: Int, block: ByteVector)
 
   private def split(pieceSize: Int, blockSize: Int): List[(Int, Int)] = {
     val reminder = pieceSize % blockSize
@@ -49,18 +61,58 @@ object Torrent {
     def pieces: NonEmptyList[PieceHash]
   }
 
-  case class SingleFile(length: Long, name: String, pieceLength: Long, pieces: NonEmptyList[PieceHash]) extends Info
+  case class SingleFile(length: Long, path: Path, pieceLength: Long, pieces: NonEmptyList[PieceHash]) extends Info {
+
+    def fileForChunk(pieceIndex: Int, offset: Int, block: ByteVector): Option[FileChunk] =
+      if (pieceLength * pieceIndex + offset + block.length <= length) Some(FileChunk(path, offset, block))
+      else None
+  }
 
   object SingleFile {
 
     def apply(singleFile: com.cmhteixeira.cmhtorrent.SingleFile): Option[SingleFile] =
       NonEmptyList
         .fromList(singleFile.pieces)
-        .map(pieces => SingleFile(singleFile.length, singleFile.name, singleFile.pieceLength, pieces))
+        .map(pieces => SingleFile(singleFile.length, Path.of(singleFile.name), singleFile.pieceLength, pieces))
   }
 
-  case class MultiFile(files: NonEmptyList[File], name: String, pieceLength: Long, pieces: NonEmptyList[PieceHash])
-      extends Info
+  case class MultiFile(files: NonEmptyList[File], name: Path, pieceLength: Long, pieces: NonEmptyList[PieceHash])
+      extends Info {
+
+    @tailrec
+    private def findFirst(
+        files: List[File],
+        remaining: Long,
+        block: ByteVector
+    ): Option[(FileChunk, List[File], ByteVector)] =
+      files match {
+        case file :: otherFiles =>
+          val chunkSize = file.length - remaining
+          if (chunkSize > 0)
+            Some(FileChunk(file.path, remaining.toInt, block.take(chunkSize)), otherFiles, block.drop(chunkSize))
+          else findFirst(otherFiles, remaining - file.length, block)
+        case Nil => None
+      }
+
+    private def findNext(files: List[File], block: ByteVector, acc: List[FileChunk]): Option[List[FileChunk]] =
+      if (block.isEmpty) Some(acc)
+      else
+        files match {
+          case file :: otherFiles =>
+            if (file.length >= block.size) Some(acc :+ FileChunk(file.path, 0, block))
+            else findNext(otherFiles, block.drop(file.length), acc :+ FileChunk(file.path, 0, block.take(file.length)))
+          case Nil => None
+        }
+
+    def fileForChunk(pieceIndex: Int, offset: Int, block: ByteVector): Option[NonEmptyList[FileChunk]] =
+      (for {
+        (firstFileChunk, remainingFiles, blockLeft) <- findFirst(files.toList, pieceIndex * pieceLength + offset, block)
+        remainingFileChunks <- remainingFiles match {
+          case Nil => Some(List.empty)
+          case remainingFiles => findNext(remainingFiles, blockLeft, List.empty)
+        }
+      } yield NonEmptyList(firstFileChunk, remainingFileChunks)).map(_.map(fC => fC.copy(path = name.resolve(fC.path))))
+  }
 
   object MultiFile {
 
@@ -69,7 +121,7 @@ object Torrent {
         files <- multiFile.files.traverse(File.apply).toRight("Files not correct.")
         files2 <- NonEmptyList.fromList(files).toRight("Files not correct 2")
         pieces <- NonEmptyList.fromList(multiFile.pieces).toRight("Not enough pieces.")
-      } yield MultiFile(files2, multiFile.name, multiFile.pieceLength, pieces)
+      } yield MultiFile(files2, Path.of(multiFile.name), multiFile.pieceLength, pieces)
 
   }
 
@@ -82,12 +134,12 @@ object Torrent {
       }
   }
 
-  case class File(length: Long, path: NonEmptyList[String])
+  case class File(length: Long, path: Path)
 
   object File {
 
     def apply(file: com.cmhteixeira.cmhtorrent.File): Option[File] =
-      NonEmptyList.fromList(file.path).map(path => File(file.length, path))
+      NonEmptyList.fromList(file.path).map(path => File(file.length, Paths.get(path.head, path.tail: _*)))
   }
 
   //todo: Rethink. There is better way.

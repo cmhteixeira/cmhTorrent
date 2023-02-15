@@ -78,7 +78,7 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
         case (hash, swarm) =>
           val pieces = swarm.getPieces
           val piecesDownloaded = pieces.count {
-            case Swarm.Downloaded(_) => true
+            case Swarm.Downloaded => true
             case _ => false
           }
           val peersTried = swarm.getPeers.size

@@ -1,7 +1,6 @@
 package com.cmhteixeira.bencode
 
 import cats.Show
-import cats.syntax.show
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
 import com.cmhteixeira.bencode.DecodingFailure.GenericDecodingFailure
 import com.cmhteixeira.cmhtorrent.Torrent

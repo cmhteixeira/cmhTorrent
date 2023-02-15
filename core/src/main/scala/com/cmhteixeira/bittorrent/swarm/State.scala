@@ -1,13 +1,10 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import cats.implicits.toTraverseOps
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.State.PieceState._
 import com.cmhteixeira.cmhtorrent.PieceHash
-
-import java.nio.file.Path
 
 private[swarm] object State {
   sealed trait PeerState
@@ -18,7 +15,7 @@ private[swarm] object State {
 
     def updateState(pieceIndex: Int, newState: PieceState): Pieces =
       Pieces(underlying.zipWithIndex.map {
-        case ((hash, oldState), i) if i == pieceIndex => hash -> newState
+        case ((hash, _), i) if i == pieceIndex => hash -> newState
         case (tuple, _) => tuple
       })
 
@@ -32,7 +29,7 @@ private[swarm] object State {
 
     def numBlocksDownloading: Int =
       underlying.foldLeft(0) {
-        case (acc, (_, Downloading(_, blocks))) =>
+        case (acc, (_, Downloading(blocks))) =>
           acc + blocks.count {
             case (_, BlockState.Asked) => true
             case _ => false
@@ -44,10 +41,8 @@ private[swarm] object State {
       underlying.lift(blockRequest.index) match {
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
-        case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
-        case Some((_, MarkedForDownload)) =>
-          Left(Pieces.OmgError(s"Piece ${blockRequest.index} still marked for download."))
-        case Some((_, d @ Downloading(_, blocks))) =>
+        case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
+        case Some((_, d @ Downloading(blocks))) =>
           val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
           Right(newState, updateState(blockRequest.index, newState))
           blocks.get(blockRequest) match {
@@ -73,22 +68,32 @@ private[swarm] object State {
           }
       }
 
-    def markPiecesForDownload(indexes: List[Int]): Either[State.Pieces.OmgError, Pieces] =
+    def markPiecesForDownload(
+        indexes: List[(Int, List[(BlockRequest, Boolean)])]
+    ): Either[State.Pieces.OmgError, Pieces] =
       indexes match {
         case Nil => Right(this)
-        case ::(head, tl) =>
-          markPieceForDownload(head) match {
+        case ::((pieceIndex, pieceBlocks), tl) =>
+          markPieceForDownload(pieceIndex, pieceBlocks) match {
             case Left(value) => Left(value)
             case Right(value) => value.markPiecesForDownload(tl)
           }
       }
 
-    def markPieceForDownload(index: Int): Either[State.Pieces.OmgError, Pieces] =
+    def markPieceForDownload(index: Int, blocks: List[(BlockRequest, Boolean)]): Either[State.Pieces.OmgError, Pieces] =
       underlying.lift(index) match {
-        case Some((_, Missing)) => Right(updateState(index, MarkedForDownload))
-        case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece $index already downloaded."))
+        case Some((_, Missing)) =>
+          Right(
+            updateState(
+              index,
+              Downloading(blocks.map {
+                case (request, asked) if asked => request -> BlockState.Asked
+                case (request, asked) if !asked => request -> BlockState.Missing
+              }.toMap)
+            )
+          )
+        case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece $index already downloaded."))
         case Some((_, _: Downloading)) => Left(Pieces.OmgError(s"Piece $index already being downloaded."))
-        case Some((_, MarkedForDownload)) => Left(Pieces.OmgError(s"Piece $index already marked for download."))
         case None => Left(Pieces.OmgError(s"Piece index $index not found."))
       }
 
@@ -96,10 +101,9 @@ private[swarm] object State {
       underlying.lift(blockRequest.index) match {
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
-        case Some((_, _: Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
-        case Some((_, MarkedForDownload)) =>
-          Left(Pieces.OmgError(s"Piece ${blockRequest.index} is marked for download."))
-        case Some((_, d @ Downloading(_, blocks))) =>
+        case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
+
+        case Some((_, d @ Downloading(blocks))) =>
           blocks.get(blockRequest) match {
             case Some(BlockState.Missing) =>
               Left(Pieces.OmgError(s"Block $blockRequest already set to missing."))
@@ -122,16 +126,16 @@ private[swarm] object State {
       *
       * @return Missing blocks of pieces that are being downloaded, alongside the associated file.
       */
-    def missingBlocks: List[(PieceFile, BlockRequest)] =
+    def missingBlocks: List[BlockRequest] =
       underlying.collect {
-        case (_, Downloading(pieceFile, blocks)) =>
-          blocks.collect { case (blockR, BlockState.Missing) => (pieceFile, blockR) }
+        case (_, Downloading(blocks)) =>
+          blocks.collect { case (blockR, BlockState.Missing) => blockR }
       }.flatten
 
-    def blockCompleted(block: BlockRequest): Either[Pieces.Error, (Option[Path], Pieces)] = {
+    def blockCompleted(block: BlockRequest): Either[Pieces.Error, Pieces] = {
       underlying.lift(block.index) match {
         case Some((_, Missing)) => Left(Pieces.OmgError(s"Piece index ${block.index} set to state missing."))
-        case Some((_, downloading @ Downloading(pieceFile, blocks))) =>
+        case Some((_, downloading @ Downloading(blocks))) =>
           blocks.get(block) match {
             case Some(BlockState.Missing) => Left(Pieces.OmgError(s"Block '$block' set to missing."))
             case Some(BlockState.Asked) =>
@@ -140,21 +144,15 @@ private[swarm] object State {
                 case _ => false
               } == blocks.size - 1
 
-              if (isLastBlock) {
-                val newState =
-                  updateState(block.index, Downloaded(pieceFile.path))
-                Right(Some(pieceFile.path), newState)
-              } else {
-                val newState =
-                  updateState(block.index, downloading.copy(blocks = blocks + (block -> BlockState.WrittenToFile)))
-                Right(None -> newState)
-              }
+              if (isLastBlock)
+                Right(updateState(block.index, Downloaded))
+              else
+                Right(updateState(block.index, downloading.copy(blocks = blocks + (block -> BlockState.WrittenToFile))))
 
             case Some(BlockState.WrittenToFile) => Left(Pieces.OmgError(s"Block '$block' already written to file"))
             case None => Left(Pieces.OmgError(s"Block $block not found."))
           }
-        case Some((_, Downloaded(_))) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded."))
-        case Some((_, MarkedForDownload)) => Left(Pieces.OmgError(s"Piece index ${block.index} marked for download."))
+        case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded."))
         case None => Left(Pieces.OmgError(s"Piece index ${block.index} not found."))
       }
     }
@@ -171,14 +169,9 @@ private[swarm] object State {
 
   object PieceState {
 
-    case class Downloading(
-        file: PieceFile,
-        blocks: Map[BlockRequest, BlockState]
-    ) extends PieceState
-
-    case class Downloaded(location: Path) extends PieceState
+    case class Downloading(blocks: Map[BlockRequest, BlockState]) extends PieceState
+    case object Downloaded extends PieceState
     case object Missing extends PieceState
-    case object MarkedForDownload extends PieceState
 
     sealed trait BlockState
 

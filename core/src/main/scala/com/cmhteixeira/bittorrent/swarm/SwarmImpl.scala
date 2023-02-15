@@ -1,24 +1,24 @@
 package com.cmhteixeira.bittorrent.swarm
 
+import cats.implicits.catsStdInstancesForFuture
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
-import com.cmhteixeira.bittorrent.swarm.State.PieceState.BlockState.Asked
 import com.cmhteixeira.bittorrent.swarm.State.PieceState._
 import com.cmhteixeira.bittorrent.swarm.State.{Active, PeerState, Pieces}
 import com.cmhteixeira.bittorrent.swarm.Swarm.Tried
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.maxBlocksAtOnce
+import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
-import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.{LinkedBlockingQueue, ScheduledExecutorService, TimeUnit}
+import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
-import scala.util.{Failure, Random, Success, Try}
+import scala.util.{Failure, Random, Success}
 
 private[bittorrent] class SwarmImpl private (
     peers: AtomicReference[Map[InetSocketAddress, PeerState]],
@@ -29,10 +29,10 @@ private[bittorrent] class SwarmImpl private (
     upsertPeers: UpsertPeers,
     config: SwarmImpl.Configuration,
     randomGen: Random,
-    writerThread: WriterThread,
+    fileManager: TorrentFileManager,
     mainExecutor: ExecutionContext
 ) extends Swarm {
-  private val logger = LoggerFactory.getLogger("Swarm")
+  private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash}")
   tracker.submit(torrent.toTrackerTorrent)
   scheduler.scheduleAtFixedRate(upsertPeers, 0, 10, TimeUnit.SECONDS)
 
@@ -48,7 +48,7 @@ private[bittorrent] class SwarmImpl private (
 
   override def getPieces: List[Swarm.PieceState] =
     pieces.get().underlying.map {
-      case (_, State.PieceState.Downloading(_, blocks)) =>
+      case (_, State.PieceState.Downloading(blocks)) =>
         Swarm.Downloading(
           blocks.size,
           blocks.count {
@@ -56,11 +56,37 @@ private[bittorrent] class SwarmImpl private (
             case _ => false
           }
         )
-      case (_, State.PieceState.Downloaded(path)) => Swarm.Downloaded(path)
+      case (_, State.PieceState.Downloaded) => Swarm.Downloaded
       case (_, State.PieceState.Missing) => Swarm.Missing
-      case (_, State.PieceState.MarkedForDownload) => Swarm.Missing
     }
   override def close: Unit = println("Closing this and that")
+
+  private def chooseNewBlocksToDownload(
+      currentState: Pieces
+  ): (List[BlockRequest], List[(Int, List[(BlockRequest, Boolean)])]) = {
+    val missingBlocks = currentState.missingBlocks
+    val blocksToDownload = maxBlocksAtOnce - currentState.numBlocksDownloading
+    val numBlocksExistingPieces = math.min(missingBlocks.size, blocksToDownload)
+    val numBlocksNewPieces = blocksToDownload - numBlocksExistingPieces
+
+    val newPieces = randomGen
+      .shuffle(currentState.missingPieces)
+      .map(a => a -> torrent.splitInBlocks(a, config.blockSize))
+      .foldLeft[List[(Int, List[(BlockRequest, Boolean)])]](List.empty) {
+        case (acc, (pieceIndex, blockPartition)) =>
+          val blockRequests = blockPartition.map { case (offSet, len) => BlockRequest(pieceIndex, offSet, len) }
+          val totalNewBlocks = acc.flatMap(_._2).size
+          if (totalNewBlocks >= numBlocksNewPieces) acc
+          else {
+            val blocks = math.min(blockRequests.size, numBlocksNewPieces - totalNewBlocks)
+            val (toDownloadNow, toDownloadLater) = blockRequests.splitAt(blocks)
+            acc :+ (pieceIndex, toDownloadNow.map(_ -> true) ::: toDownloadLater.map(_ -> false))
+          }
+      }
+    val newBlocks = randomGen.shuffle(missingBlocks).take(numBlocksExistingPieces)
+
+    (newBlocks, newPieces)
+  }
 
   @tailrec
   private def updatePieces(): Unit = {
@@ -68,47 +94,21 @@ private[bittorrent] class SwarmImpl private (
     val numBlocksDownloading = currentState.numBlocksDownloading
     if (numBlocksDownloading >= maxBlocksAtOnce) logger.info(s"Downloading $numBlocksDownloading blocks already.")
     else {
-      val missingBlocks = currentState.missingBlocks
-      val blocksToDownload = maxBlocksAtOnce - numBlocksDownloading
-      val numBlocksExistingPieces = math.min(missingBlocks.size, blocksToDownload)
-      val numBlocksNewPieces = blocksToDownload - numBlocksExistingPieces
-      logger.info(
-        s"Missing blocks: ${missingBlocks.size}. Blocks to download: $blocksToDownload. Existing Pieces: $numBlocksExistingPieces. NewPieces: $numBlocksNewPieces"
-      )
-      val newPieces = randomGen
-        .shuffle(currentState.missingPieces)
-        .map(a => a -> torrent.splitInBlocks(a, config.blockSize))
-        .foldLeft[List[(Int, List[(BlockRequest, Boolean)])]](List.empty) {
-          case (acc, (pieceIndex, blockPartition)) =>
-            val blockRequests = blockPartition.map { case (offSet, len) => BlockRequest(pieceIndex, offSet, len) }
-            val totalNewBlocks = acc.flatMap(_._2).size
-            if (totalNewBlocks >= numBlocksNewPieces) acc
-            else {
-              val blocks = math.min(blockRequests.size, numBlocksNewPieces - totalNewBlocks)
-              val (toDownloadNow, toDownloadLater) = blockRequests.splitAt(blocks)
-              acc :+ (pieceIndex, toDownloadNow.map(_ -> true) ::: toDownloadLater.map(_ -> false))
-            }
-        }
-
-      val newBlocks = randomGen.shuffle(missingBlocks).take(numBlocksExistingPieces)
+      val (newBlocksToDownload, newPiecesToDownload) = chooseNewBlocksToDownload(currentState)
       (for {
-        state1 <- currentState.markBlocksForDownload(newBlocks.map(_._2))
-        state2 <- state1.markPiecesForDownload(newPieces.map(_._1))
+        state1 <- currentState.markBlocksForDownload(newBlocksToDownload)
+        state2 <- state1.markPiecesForDownload(newPiecesToDownload)
       } yield state2) match {
         case Left(value) => logger.warn(s"No downloading of new pieces: $value")
         case Right(newState) =>
           if (!pieces.compareAndSet(currentState, newState)) updatePieces()
           else {
-            newBlocks.foreach { case (pieceFile, blockRequest) => downloadBlock(pieceFile, blockRequest) }
-            newPieces.foreach {
-              case (pieceIndex, blocks) =>
-                createNewPiece(pieceIndex, blocks) match {
-                  case Failure(exception) => logger.warn("OMG. what is this", exception)
-                  case Success(pieceFile) =>
-                    blocks.foreach {
-                      case (blockRequest, shouldDownload) =>
-                        if (shouldDownload) downloadBlock(pieceFile, blockRequest)
-                    }
+            newBlocksToDownload.foreach(blockRequest => downloadBlock(blockRequest))
+            newPiecesToDownload.foreach {
+              case (_, blocks) =>
+                blocks.foreach {
+                  case (blockRequest, download) if download => downloadBlock(blockRequest)
+                  case _ => ()
                 }
             }
           }
@@ -116,46 +116,14 @@ private[bittorrent] class SwarmImpl private (
     }
   }
 
-  private def createNewPiece(pieceIndex: Int, blocksToDownload: List[(BlockRequest, Boolean)]): Try[PieceFile] = {
-    val currentState = pieces.get()
-    val filePath = fileName(pieceIndex)
-    val sizeFile = torrent.pieceSize(pieceIndex)
-    logger.info(s"Creating file '${filePath.toAbsolutePath}' for piece $pieceIndex with $sizeFile bytes.")
-
-    (for {
-      backingFile <- PieceFileImpl(filePath)
-      _ <- backingFile.write(new Array[Byte](sizeFile))
-    } yield backingFile) match {
-      case Failure(exception) =>
-        val msg = s"Creating file '$filePath' for piece $pieceIndex"
-        logger.warn(msg, exception)
-        Failure(new IOException(msg, exception))
-      case Success(pieceFile) =>
-        val newState = currentState.updateState(
-          pieceIndex,
-          Downloading(
-            file = pieceFile,
-            blocks = blocksToDownload.map {
-              case (blockRequest, downloadNow) =>
-                if (downloadNow) blockRequest -> Asked
-                else blockRequest -> BlockState.Missing
-            }.toMap
-          )
-        )
-        if (!pieces.compareAndSet(currentState, newState)) createNewPiece(pieceIndex, blocksToDownload)
-        else Success(pieceFile)
-    }
-  }
-
-  private def downloadBlock(pieceFile: PieceFile, blockR: BlockRequest): Unit = {
+  private def downloadBlock(blockR: BlockRequest): Unit = {
     val relevantPeers = peers.get().collect { case (_, Active(peer)) if peer.hasPiece(blockR.index) => peer }.toList
     randomGen.shuffle(relevantPeers) match {
       case Nil =>
         logger.info(s"Trying to download '$blockR'. No peer has piece.")
         markAsMissing(blockR)
-        // todo: Can this lead to too many recursive calls will lead to StackOverflow.
         scheduler.schedule(new Runnable { def run(): Unit = updatePieces() }, 60, TimeUnit.SECONDS)
-      case headPeer :: xs => onceBlockArrives(pieceFile, blockR, timeout(headPeer.download(blockR)))
+      case headPeer :: xs => onceBlockArrives(blockR, timeout(headPeer.download(blockR)))
     }
   }
 
@@ -166,7 +134,6 @@ private[bittorrent] class SwarmImpl private (
       30,
       TimeUnit.SECONDS
     )
-
     fut.onComplete(promise.tryComplete)(
       mainExecutor
     ) //todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
@@ -174,30 +141,35 @@ private[bittorrent] class SwarmImpl private (
   }
 
   private def onceBlockArrives(
-      backingFile: PieceFile,
       blockRequest: BlockRequest,
       eventualBlock: Future[ByteVector]
-  ): Unit = {
-    val BlockRequest(_, offSet, _) = blockRequest
-    val newPromise = Promise[Unit]()
+  ): Unit =
     eventualBlock.onComplete {
       case Failure(exception) =>
         logger.warn(s"Failed to download '$blockRequest'.", exception)
         markAsMissing(blockRequest)
         updatePieces()
       case Success(pieceBlock) =>
-        writerThread.add(WriterThread.Message(newPromise, offSet, backingFile, pieceBlock))
+        torrent.fileForBlock(blockRequest.index, blockRequest.offSet, pieceBlock) match {
+          case Some(files) =>
+            implicit val ec: ExecutionContext = mainExecutor
+            files.traverse {
+              case FileChunk(path, offset, block) => fileManager.write(path, offset, block)
+            } onComplete {
+              case Success(_) =>
+                blockDone(blockRequest)
+                updatePieces()
+              case Failure(exception) =>
+                logger.error(s"Failed to write block '$blockRequest'.", exception)
+                markAsMissing(blockRequest)
+                updatePieces()
+            }
+          case None =>
+            logger.error(s"OMGGGGGGGGG: '$blockRequest'.")
+            markAsMissing(blockRequest)
+            updatePieces()
+        }
     }(mainExecutor)
-    newPromise.future.onComplete {
-      case Failure(exception) =>
-        logger.error(s"Failed to write block '$blockRequest' into file '${backingFile.path}'.", exception)
-        markAsMissing(blockRequest)
-        updatePieces()
-      case Success(_) =>
-        blockDone(blockRequest, backingFile)
-        updatePieces()
-    }(mainExecutor)
-  }
 
   private def markAsMissing(blockRequest: BlockRequest): Unit = {
     val currentState = pieces.get()
@@ -210,30 +182,20 @@ private[bittorrent] class SwarmImpl private (
   }
 
   @tailrec
-  private def blockDone(blockRequest: BlockRequest, backingFile: PieceFile): Unit = {
+  private def blockDone(blockRequest: BlockRequest): Unit = {
     val currentState = pieces.get()
     val BlockRequest(index, offSet, blockLength) = blockRequest
     currentState.blockCompleted(blockRequest) match {
       case Left(value) => logger.error(s"Very serious error: '$value'.")
-      case Right((lastBlock, newState)) =>
-        if (!pieces.compareAndSet(currentState, newState)) blockDone(blockRequest, backingFile)
+      case Right(newState) =>
+        if (!pieces.compareAndSet(currentState, newState)) blockDone(blockRequest)
         else
-          lastBlock match {
-            case Some(value) =>
-              logger.info(
-                s"Wrote last block of piece $index. Offset: $offSet, length: $blockLength. Path piece: '$value'."
-              )
-              backingFile.close()
-            case None => logger.info(s"Wrote block. Piece: $index, offset: $offSet, length: $blockLength.")
+          newState.index(blockRequest.index).get match {
+            case Downloaded => logger.info(s"Wrote last block of piece $index. Offset: $offSet, length: $blockLength.")
+            case _ => logger.info(s"Wrote block. Piece: $index, offset: $offSet, length: $blockLength.")
           }
     }
   }
-
-  private def fileName(pieceIndex: Int): Path =
-    config.downloadDir.resolve(
-      s"cmhTorrent-${torrent.infoHash.hex}.piece-$pieceIndex-of-${torrent.info.pieces.size - 1}"
-    )
-
 }
 
 object SwarmImpl {
@@ -255,7 +217,7 @@ object SwarmImpl {
       torrent: Torrent
   ): SwarmImpl = {
     val peers = new AtomicReference[Map[InetSocketAddress, PeerState]](Map.empty)
-    val writerThread = WriterThread(mainExecutor, new LinkedBlockingQueue[WriterThread.Message]())
+    val writerThread = WriterThread(downloadDir, mainExecutor)
 
     new SwarmImpl(
       peers = peers,
@@ -266,7 +228,7 @@ object SwarmImpl {
       upsertPeers = UpsertPeers(peers, peerFactory, torrent, tracker),
       config = Configuration(downloadDir, blockSize),
       randomGen = random,
-      writerThread = writerThread,
+      fileManager = writerThread.get,
       mainExecutor = mainExecutor
     )
   }

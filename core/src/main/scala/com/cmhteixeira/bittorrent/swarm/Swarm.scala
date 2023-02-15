@@ -18,7 +18,7 @@ trait Swarm {
 
 object Swarm {
   sealed trait PieceState
-  case class Downloaded(location: Path) extends PieceState
+  case object Downloaded extends PieceState
   case object Missing extends PieceState
 
   case class Downloading(
