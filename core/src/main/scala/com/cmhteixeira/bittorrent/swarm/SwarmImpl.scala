@@ -4,8 +4,8 @@ import cats.implicits.catsStdInstancesForFuture
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.State.PieceState._
-import com.cmhteixeira.bittorrent.swarm.State.{Active, PeerState, Pieces}
-import com.cmhteixeira.bittorrent.swarm.Swarm.Tried
+import com.cmhteixeira.bittorrent.swarm.State.{Active, PeerState => InnerState, Pieces}
+import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.maxBlocksAtOnce
 import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
 import com.cmhteixeira.bittorrent.tracker.Tracker
@@ -21,7 +21,7 @@ import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
 import scala.util.{Failure, Random, Success}
 
 private[bittorrent] class SwarmImpl private (
-    peers: AtomicReference[Map[InetSocketAddress, PeerState]],
+    peers: AtomicReference[Map[InetSocketAddress, InnerState]],
     pieces: AtomicReference[State.Pieces],
     torrent: Torrent,
     tracker: Tracker,
@@ -42,22 +42,22 @@ private[bittorrent] class SwarmImpl private (
 
   override def getPeers: Map[InetSocketAddress, Swarm.PeerState] =
     peers.get().map {
-      case (peerSocket, State.Tried(triedLast)) => peerSocket -> Tried(triedLast)
-      case (peerSocket, State.Active(peer)) => peerSocket -> Swarm.On(peer.getState)
+      case (peerSocket, State.Tried(triedLast)) => peerSocket -> PeerState.Tried(triedLast)
+      case (peerSocket, State.Active(peer)) => peerSocket -> PeerState.On(peer.getState)
     }
 
   override def getPieces: List[Swarm.PieceState] =
     pieces.get().underlying.map {
       case (_, State.PieceState.Downloading(blocks)) =>
-        Swarm.Downloading(
+        PieceState.Downloading(
           blocks.size,
           blocks.count {
             case (_, BlockState.WrittenToFile) => true
             case _ => false
           }
         )
-      case (_, State.PieceState.Downloaded) => Swarm.Downloaded
-      case (_, State.PieceState.Missing) => Swarm.Missing
+      case (_, State.PieceState.Downloaded) => PieceState.Downloaded
+      case (_, State.PieceState.Missing) => PieceState.Missing
     }
   override def close: Unit = println("Closing this and that")
 
@@ -216,7 +216,7 @@ object SwarmImpl {
       blockSize: Int,
       torrent: Torrent
   ): SwarmImpl = {
-    val peers = new AtomicReference[Map[InetSocketAddress, PeerState]](Map.empty)
+    val peers = new AtomicReference[Map[InetSocketAddress, InnerState]](Map.empty)
     val writerThread = WriterThread(downloadDir, mainExecutor)
 
     new SwarmImpl(

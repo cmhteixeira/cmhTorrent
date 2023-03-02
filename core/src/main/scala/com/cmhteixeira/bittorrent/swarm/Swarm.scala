@@ -18,16 +18,21 @@ trait Swarm {
 
 object Swarm {
   sealed trait PieceState
-  case object Downloaded extends PieceState
-  case object Missing extends PieceState
 
-  case class Downloading(
-      totalBlocks: Int,
-      completed: Int
-  ) extends PieceState
+  object PieceState {
+    case object Downloaded extends PieceState
+    case object Missing extends PieceState
+
+    case class Downloading(
+        totalBlocks: Int,
+        completed: Int
+    ) extends PieceState
+  }
 
   sealed trait PeerState
-  case class Tried(las: Long) extends PeerState
-  case class On(peerState: Peer.PeerState) extends PeerState
 
+  object PeerState {
+    case class Tried(las: Long) extends PeerState
+    case class On(peerState: Peer.PeerState) extends PeerState
+  }
 }

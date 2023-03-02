@@ -3,7 +3,7 @@ package com.cmhteixeira.bittorrent.client
 import com.cmhteixeira.{bencode, bittorrent}
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.{HandShaked, TcpConnected}
-import com.cmhteixeira.bittorrent.swarm.Swarm.On
+import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
 import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
 
 import java.nio.file.{Files, Path}
@@ -78,16 +78,16 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
         case (hash, swarm) =>
           val pieces = swarm.getPieces
           val piecesDownloaded = pieces.count {
-            case Swarm.Downloaded => true
+            case PieceState.Downloaded => true
             case _ => false
           }
           val peersTried = swarm.getPeers.size
           val peersActive = swarm.getPeers.count {
-            case (_, On(_: HandShaked)) => true
+            case (_, PeerState.On(_: HandShaked)) => true
             case _ => false
           }
           val peersConnectedNotHandshaked = swarm.getPeers.count {
-            case (_, On(TcpConnected)) => true
+            case (_, PeerState.On(TcpConnected)) => true
             case _ => false
           }
 
