@@ -37,8 +37,20 @@ private[swarm] object State {
         case (acc, _) => acc
       }
 
+    def pieceHashVerified(index: Int): Either[String, Pieces] = {
+      underlying.lift(index) match {
+        case Some((_, State.PieceState.Downloaded)) => Right(updateState(index, State.PieceState.DownloadedAndVerified))
+        case Some((_, State.PieceState.Missing)) => Left("Missing")
+        case Some((_, State.PieceState.Downloading(_))) => Left("Downloading")
+        case Some((_, State.PieceState.DownloadedAndVerified)) => Left("Already verified.")
+        case None => Left(s"Piece $index does not exist.")
+      }
+    }
+
     def markBlockForDownload(blockRequest: BlockRequest) =
       underlying.lift(blockRequest.index) match {
+        case Some((_, DownloadedAndVerified)) =>
+          Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded and verified."))
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
         case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
@@ -93,6 +105,7 @@ private[swarm] object State {
             )
           )
         case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece $index already downloaded."))
+        case Some((_, DownloadedAndVerified)) => Left(Pieces.OmgError(s"Piece $index already downloaded and verified."))
         case Some((_, _: Downloading)) => Left(Pieces.OmgError(s"Piece $index already being downloaded."))
         case None => Left(Pieces.OmgError(s"Piece index $index not found."))
       }
@@ -102,7 +115,8 @@ private[swarm] object State {
         case Some((_, Missing)) =>
           Left(Pieces.OmgError(s"Entire piece ${blockRequest.index} not yet registered."))
         case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded."))
-
+        case Some((_, DownloadedAndVerified)) =>
+          Left(Pieces.OmgError(s"Piece ${blockRequest.index} already downloaded and verified."))
         case Some((_, d @ Downloading(blocks))) =>
           blocks.get(blockRequest) match {
             case Some(BlockState.Missing) =>
@@ -117,8 +131,8 @@ private[swarm] object State {
       }
     }
 
-    def index(idx: Int): Option[PieceState] =
-      underlying.lift(idx).map(_._2)
+    def index(idx: Int): Option[(PieceHash, PieceState)] =
+      underlying.lift(idx)
 
     /** Missing blocks of pieces that are being downloaded.
       *
@@ -153,6 +167,7 @@ private[swarm] object State {
             case None => Left(Pieces.OmgError(s"Block $block not found."))
           }
         case Some((_, Downloaded)) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded."))
+        case Some((_, DownloadedAndVerified)) => Left(Pieces.OmgError(s"Piece index ${block.index} already downloaded and verified."))
         case None => Left(Pieces.OmgError(s"Piece index ${block.index} not found."))
       }
     }
@@ -171,6 +186,7 @@ private[swarm] object State {
 
     case class Downloading(blocks: Map[BlockRequest, BlockState]) extends PieceState
     case object Downloaded extends PieceState
+    case object DownloadedAndVerified extends PieceState
     case object Missing extends PieceState
 
     sealed trait BlockState

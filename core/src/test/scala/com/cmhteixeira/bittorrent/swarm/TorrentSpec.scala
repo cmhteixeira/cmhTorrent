@@ -40,13 +40,13 @@ class TorrentSpec extends FunSuite with Matchers {
           case Torrent.MultiFile(files, name, _, _) => name.resolve(files.head.path)
         }
 
-        swarmTorrent.fileForBlock(0, 0, block) shouldBe Some(NonEmptyList.one(FileChunk(firstFile, 0, block)))
-        swarmTorrent.fileForBlock(1800, 0, block) shouldBe None
-        swarmTorrent.fileForBlock(1696, 0, block) shouldBe None
-        swarmTorrent.fileForBlock(1695, 0, block) shouldBe Some(
+        swarmTorrent.fileChunks(0, 0, block) shouldBe Some(NonEmptyList.one(FileChunk(firstFile, 0, block)))
+        swarmTorrent.fileChunks(1800, 0, block) shouldBe None
+        swarmTorrent.fileChunks(1696, 0, block) shouldBe None
+        swarmTorrent.fileChunks(1695, 0, block) shouldBe Some(
           NonEmptyList.one(FileChunk(firstFile, (1695 * swarmTorrent.info.pieceLength).toInt, block))
         )
-        swarmTorrent.fileForBlock(1695, 40, block) shouldBe Some(
+        swarmTorrent.fileChunks(1695, 40, block) shouldBe Some(
           NonEmptyList.one(FileChunk(firstFile, (1695 * swarmTorrent.info.pieceLength + 40).toInt, block))
         )
     }
@@ -63,8 +63,8 @@ class TorrentSpec extends FunSuite with Matchers {
         val block1 = ByteVector.low(10)
         val block2 = ByteVector.low(200)
 
-        swarmTorrent.fileForBlock(0, 0, block1) shouldBe Some(NonEmptyList.one(FileChunk(files.head, 0, block1)))
-        swarmTorrent.fileForBlock(0, 0, block2) shouldBe Some(
+        swarmTorrent.fileChunks(0, 0, block1) shouldBe Some(NonEmptyList.one(FileChunk(files.head, 0, block1)))
+        swarmTorrent.fileChunks(0, 0, block2) shouldBe Some(
           NonEmptyList.of(
             FileChunk(files.head, 0, block2.take(175)),
             FileChunk(files.tail.head, 0, block2.drop(175))
@@ -72,11 +72,11 @@ class TorrentSpec extends FunSuite with Matchers {
         )
 
         val block3 = ByteVector.low(262144)
-        swarmTorrent.fileForBlock(1595, 262100, block3) shouldBe None
+        swarmTorrent.fileChunks(1595, 262100, block3) shouldBe None
 
         val block4 = ByteVector.low(108839 - 25)
         println(swarmTorrent.pieceSize(1595))
-        swarmTorrent.fileForBlock(1595, 10, block4) shouldBe
+        swarmTorrent.fileChunks(1595, 10, block4) shouldBe
           Some(
             NonEmptyList.of( // revisit this.
               FileChunk(files(1), 418119505 + 10, block4.take(418227626 - (418119505 + 10))),

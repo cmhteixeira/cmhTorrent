@@ -4,7 +4,7 @@ import cats.implicits.catsStdInstancesForFuture
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.State.PieceState._
-import com.cmhteixeira.bittorrent.swarm.State.{Active, PeerState => InnerState, Pieces}
+import com.cmhteixeira.bittorrent.swarm.State.{Active, Pieces, PeerState => InnerState}
 import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.maxBlocksAtOnce
 import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
@@ -14,6 +14,7 @@ import scodec.bits.ByteVector
 
 import java.net.InetSocketAddress
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
@@ -56,7 +57,8 @@ private[bittorrent] class SwarmImpl private (
             case _ => false
           }
         )
-      case (_, State.PieceState.Downloaded) => PieceState.Downloaded
+      case (_, State.PieceState.Downloaded) => PieceState.Downloaded // hum....
+      case (_, State.PieceState.DownloadedAndVerified) => PieceState.Downloaded
       case (_, State.PieceState.Missing) => PieceState.Missing
     }
   override def close: Unit = println("Closing this and that")
@@ -150,7 +152,7 @@ private[bittorrent] class SwarmImpl private (
         markAsMissing(blockRequest)
         updatePieces()
       case Success(pieceBlock) =>
-        torrent.fileForBlock(blockRequest.index, blockRequest.offSet, pieceBlock) match {
+        torrent.fileChunks(blockRequest.index, blockRequest.offSet, pieceBlock) match {
           case Some(files) =>
             implicit val ec: ExecutionContext = mainExecutor
             files.traverse {
@@ -191,9 +193,36 @@ private[bittorrent] class SwarmImpl private (
         if (!pieces.compareAndSet(currentState, newState)) blockDone(blockRequest)
         else
           newState.index(blockRequest.index).get match {
-            case Downloaded => logger.info(s"Wrote last block of piece $index. Offset: $offSet, length: $blockLength.")
+            case (pieceHash, Downloaded) =>
+              implicit val ec = mainExecutor
+              fileManager.complete(
+                torrent.fileSlices(blockRequest.index).fold[List[Torrent.FileSlice]](List())(_.toList).map {
+                  case Torrent.FileSlice(path, offset, len) => TorrentFileManager.FileSlice(path, offset, len)
+                }
+              ) { content =>
+                ByteVector(MessageDigest.getInstance("SHA-1").digest(content.toArray)) == ByteVector(
+                  pieceHash.bytes
+                )
+              } onComplete {
+                case Success(pieceVerified) if pieceVerified => hashVerified(blockRequest.index)
+                case Success(pieceVerified) if !pieceVerified =>
+                  logger.warn(s"Hash did not match for piece ${blockRequest.index}. Should be ${pieceHash.hex}.")
+                case Failure(exception) =>
+                  logger.warn(s"Could not verify hash for piece ${blockRequest.index}.", exception)
+              }
             case _ => logger.info(s"Wrote block. Piece: $index, offset: $offSet, length: $blockLength.")
           }
+    }
+  }
+
+  private def hashVerified(pieceIndex: Int): Unit = {
+    val currentState = pieces.get()
+    currentState.pieceHashVerified(pieceIndex) match {
+      case Left(error) =>
+        logger.warn(s"Very serious offense. Failed to register piece $pieceIndex as verified: '$error'.")
+      case Right(newState) =>
+        if (!pieces.compareAndSet(currentState, newState)) hashVerified(pieceIndex)
+        else logger.info(s"Piece $pieceIndex has been verified.")
     }
   }
 }
@@ -203,7 +232,6 @@ object SwarmImpl {
   type PeerFactory = InetSocketAddress => Peer
 
   private val maxBlocksAtOnce = 100
-
   case class Configuration(downloadDir: Path, blockSize: Int)
 
   def apply(

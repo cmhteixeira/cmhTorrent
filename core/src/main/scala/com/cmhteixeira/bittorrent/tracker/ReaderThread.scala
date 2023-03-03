@@ -16,7 +16,8 @@ private[tracker] class ReaderThread private (
 ) extends Runnable {
   private val logger = LoggerFactory.getLogger("TrackerReader")
 
-  override def run(): Unit = {
+  @tailrec
+  override final def run(): Unit = {
     val packet = new DatagramPacket(ByteBuffer.allocate(maximumUdpPacketSize).array(), maximumUdpPacketSize)
     Try(udpSocket.receive(packet)) match {
       case Failure(exception) =>
