@@ -14,7 +14,7 @@ import scala.util.{Failure, Success, Try}
 
 private[tracker] final class TrackerImpl private (
     socket: DatagramSocket,
-    state: AtomicReference[Map[InfoHash, Foo]],
+    state: AtomicReference[Map[InfoHash, State]],
     mainExecutor: ExecutionContext,
     scheduler: ScheduledExecutorService,
     config: Config,
@@ -33,7 +33,7 @@ private[tracker] final class TrackerImpl private (
         val entry = Tiers.start(txnIdGenerator, torrent)
         entry.toList.foreach {
           case (udpSocket, connectSent) =>
-            scheduler.submit(addTracker(torrent.infoHash, udpSocket, connectSent))
+            mainExecutor.execute(addTracker(torrent.infoHash, udpSocket, connectSent))
         }
       }
     }
@@ -156,8 +156,8 @@ private[tracker] final class TrackerImpl private (
             val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
             if (!state.compareAndSet(currentState, newState)) sendAnnounce(infoHash, tracker)
             else sendAnnounc(infoHash, announce, tracker)
-          case Some(state) => logger.info(s"Sending Announce to '$tracker' for '$infoHash', but state is '$state'")
-          case None => logger.info(s"Sending Announce to '$tracker' for '$infoHash' but tracker not registered.")
+          case Some(state) => logger.warn(s"Sending Announce to '$tracker' for '$infoHash', but state is '$state'")
+          case None => logger.warn(s"Sending Announce to '$tracker' for '$infoHash' but tracker not registered.")
         }
       case None => logger.warn(s"Sending Announce to '$tracker' but '$infoHash' not registered.")
     }
@@ -270,8 +270,8 @@ private[tracker] final class TrackerImpl private (
       case _ => List.empty
     }
 
-  def statistics2(foo: Foo): Tracker.Statistics =
-    foo match {
+  def statistics(trackerState: State): Tracker.Statistics =
+    trackerState match {
       case Submitted => Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0, 0), Map.empty)
       case Tiers(underlying) =>
         underlying
@@ -288,7 +288,7 @@ private[tracker] final class TrackerImpl private (
     }
 
   override def statistics: Map[InfoHash, Tracker.Statistics] =
-    state.get().map { case (infoHash, foo) => infoHash -> statistics2(foo) }
+    state.get().map { case (infoHash, trackerState) => infoHash -> statistics(trackerState) }
 
 }
 
@@ -309,7 +309,7 @@ object TrackerImpl {
   ): TrackerImpl =
     new TrackerImpl(
       new DatagramSocket(config.port),
-      new AtomicReference[Map[InfoHash, Foo]](Map.empty),
+      new AtomicReference[Map[InfoHash, State]](Map.empty),
       mainExecutor,
       scheduler,
       config,

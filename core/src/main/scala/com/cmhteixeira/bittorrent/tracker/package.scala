@@ -7,14 +7,14 @@ import scala.concurrent.Promise
 
 package object tracker {
 
-  private[tracker] sealed trait Foo
+  private[tracker] sealed trait State
 
-  private[tracker] case object Submitted extends Foo
+  private[tracker] case object Submitted extends State
 
-  private[tracker] case class Tiers[+A <: State](underlying: NonEmptyList[(InetSocketAddress, A)]) extends Foo {
+  private[tracker] case class Tiers[+A <: TrackerState](underlying: NonEmptyList[(InetSocketAddress, A)]) extends State {
     def toList: List[(InetSocketAddress, A)] = underlying.toList
 
-    def updateEntry(tracker: InetSocketAddress, newState: State): Tiers[State] =
+    def updateEntry(tracker: InetSocketAddress, newState: TrackerState): Tiers[TrackerState] =
       Tiers(underlying.map {
         case (trackerSocket, _) if trackerSocket == tracker => (trackerSocket, newState)
         case pair => pair
@@ -60,16 +60,16 @@ package object tracker {
 
   }
 
-  private[tracker] sealed trait State
+  private[tracker] sealed trait TrackerState
 
-  private[tracker] case class ConnectSent(txnId: Int, channel: Promise[Unit], n: Int) extends State
+  private[tracker] case class ConnectSent(txnId: Int, channel: Promise[Unit], n: Int) extends TrackerState
 
-  private[tracker] case class ConnectReceived(connectionId: Long, timestamp: Long) extends State
+  private[tracker] case class ConnectReceived(connectionId: Long, timestamp: Long) extends TrackerState
 
   private[tracker] case class AnnounceSent(txnId: Int, connectionId: Long, timestampConnectionId: Long, n: Int)
-      extends State
+      extends TrackerState
 
   private[tracker] case class AnnounceReceived(leechers: Int, seeders: Int, peers: List[InetSocketAddress])
-      extends State
+      extends TrackerState
 
 }

@@ -12,12 +12,13 @@ import scala.util.{Failure, Success, Try}
 
 private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
-    state: AtomicReference[Map[InfoHash, Foo]]
+    state: AtomicReference[Map[InfoHash, State]]
 ) extends Runnable {
   private val logger = LoggerFactory.getLogger("TrackerReader")
 
   @tailrec
   override final def run(): Unit = {
+    logger.info(s"UDP OS buffer: ${udpSocket.getReceiveBufferSize}.")
     val packet = new DatagramPacket(ByteBuffer.allocate(maximumUdpPacketSize).array(), maximumUdpPacketSize)
     Try(udpSocket.receive(packet)) match {
       case Failure(exception) =>
@@ -32,7 +33,7 @@ private[tracker] class ReaderThread private (
 
   private def processPacket(i: DatagramPacket): Unit = {
     val payloadSize = i.getLength
-    if (payloadSize == 16) { // could be ConnectResponse
+    if (payloadSize == 16) // could be ConnectResponse
       ConnectResponse.deserialize(i.getData) match {
         case Left(error) =>
           val msg =
@@ -42,7 +43,7 @@ private[tracker] class ReaderThread private (
           logger.info(s"Received potential Connect response from '${i.getSocketAddress}'.")
           processConnect(i.getSocketAddress.asInstanceOf[InetSocketAddress], connectResponse, System.nanoTime())
       }
-    } else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) { // could be an AnnounceResponse
+    else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) // could be an AnnounceResponse
       AnnounceResponse.deserialize(i.getData, payloadSize) match {
         case Left(value) =>
           val msg =
@@ -52,7 +53,7 @@ private[tracker] class ReaderThread private (
           logger.info(s"Received potential Announce response from '${i.getSocketAddress}' with $payloadSize bytes.")
           processAnnounce(i.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
       }
-    } else
+    else
       logger.warn(
         s"Received packet with $payloadSize bytes from '${i.getSocketAddress}'. It does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'."
       )
@@ -112,6 +113,6 @@ private[tracker] object ReaderThread {
 
   def apply(
       socket: DatagramSocket,
-      state: AtomicReference[Map[InfoHash, Foo]]
+      state: AtomicReference[Map[InfoHash, State]]
   ): ReaderThread = new ReaderThread(socket, state)
 }
