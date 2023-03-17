@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 
 class CmhClientImpl private (
-    torrents: AtomicReference[Map[InfoHash, Swarm]],
+    torrents: AtomicReference[Map[CmhClient.Torrent, Swarm]],
     swarmFactory: SwarmFactory
 ) extends CmhClient {
 
@@ -25,9 +25,10 @@ class CmhClientImpl private (
       t: SwarmTorrent,
       p: Path
   ): Future[Path] =
-    torrents.get().get(t.infoHash) match {
+    torrents.get().find { case (CmhClient.Torrent(infoHash, _), _) => infoHash == t.infoHash } match {
       case Some(_) => Future.failed(new IllegalArgumentException("Torrent already submitted."))
-      case None => insertNewTorrent(t.infoHash, swarmFactory.newSwarm(t, p, 16384))
+      case None =>
+        insertNewTorrent(CmhClient.Torrent(t.infoHash, t.info.torrentName), swarmFactory.newSwarm(t, p, 16384))
     }
 
   override def downloadTorrent(
@@ -54,30 +55,31 @@ class CmhClientImpl private (
   override def piecesStatus(infoHash: bittorrent.InfoHash): Any = ???
 
   override def peerStatus(infoHash: bittorrent.InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]] =
-    torrents.get().get(infoHash).map { swarm =>
-      swarm.getPeers
+    torrents.get().find { case (CmhClient.Torrent(thisInfohash, _), _) => thisInfohash == infoHash }.map {
+      case (_, swarm) =>
+        swarm.getPeers
     }
 
   override def stop(t: bittorrent.InfoHash): Boolean = ???
   override def delete(t: bittorrent.InfoHash): Boolean = ???
 
-  private def insertNewTorrent(infoHash: InfoHash, swarm: Swarm): Future[Path] = {
+  private def insertNewTorrent(torrent: CmhClient.Torrent, swarm: Swarm): Future[Path] = {
     val currentState = torrents.get()
-    currentState.get(infoHash) match {
+    currentState.find { case (CmhClient.Torrent(thisInfohash, _), _) => thisInfohash == torrent.infoHash } match {
       case Some(_) =>
         swarm.close
         Future.failed(new IllegalArgumentException("Torrent already submitted."))
       case None =>
-        if (!torrents.compareAndSet(currentState, currentState + (infoHash -> swarm))) insertNewTorrent(infoHash, swarm)
+        if (!torrents.compareAndSet(currentState, currentState + (torrent -> swarm))) insertNewTorrent(torrent, swarm)
         else Future.successful(Path.of("asd"))
     }
   }
 
-  override def listTorrents: List[CmhClient.TorrentDetails] =
+  override def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails] =
     torrents
       .get()
       .map {
-        case (hash, swarm) =>
+        case (torrent: CmhClient.Torrent, swarm) =>
           val pieces = swarm.getPieces
           val piecesDownloaded = pieces.count {
             case PieceState.Downloaded => true
@@ -93,22 +95,22 @@ class CmhClientImpl private (
             case _ => false
           }
 
-          CmhClient
-            .TorrentDetails(hash, piecesDownloaded, pieces.size, peersActive, peersConnectedNotHandshaked, peersTried)
+          torrent ->
+            CmhClient
+              .TorrentDetails(piecesDownloaded, pieces.size, peersActive, peersConnectedNotHandshaked, peersTried)
       }
-      .toList
 
   override def stopAll: Unit = {
     logger.info("Shutting down.")
     torrents.get().foreach { case (_, swarm) => swarm.close }
   }
 
-  override def statistics: Map[InfoHash, Tracker.Statistics] =
-    torrents.get().map { case (infoHash, swarm) => infoHash -> swarm.trackerStats }
+  override def statistics: Map[CmhClient.Torrent, Tracker.Statistics] =
+    torrents.get().map { case (clientTorrent, swarm) => clientTorrent -> swarm.trackerStats }
 }
 
 object CmhClientImpl {
 
   def apply(swarmFactory: SwarmFactory): CmhClientImpl =
-    new CmhClientImpl(new AtomicReference[Map[InfoHash, Swarm]](Map.empty), swarmFactory)
+    new CmhClientImpl(new AtomicReference[Map[CmhClient.Torrent, Swarm]](Map.empty), swarmFactory)
 }

@@ -58,6 +58,7 @@ object Torrent {
     def pieceLength: Long
     def pieceSize(index: Int): Int
     def pieces: NonEmptyList[PieceHash]
+    def torrentName: String
   }
 
   case class SingleFile(length: Long, path: Path, pieceLength: Long, pieces: NonEmptyList[PieceHash]) extends Info {
@@ -78,6 +79,8 @@ object Torrent {
       if (startOfPiece + thisPieceLength <= length) Some(FileSlice(path, startOfPiece.toInt, thisPieceLength))
       else None
     }
+
+    override def torrentName: String = path.toString
   }
 
   object SingleFile {
@@ -151,6 +154,7 @@ object Torrent {
           .toInt - (numberPieces - 1) * pieceLength.toInt
       } else pieceLength.toInt // todo: fix cast
     }
+    override def torrentName: String = name.toString
   }
 
   object MultiFile {

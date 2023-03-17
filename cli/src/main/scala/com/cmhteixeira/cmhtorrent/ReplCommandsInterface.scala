@@ -106,20 +106,22 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 
   private def testprint: Unit = {
     val torrentDetails = torrentClient.listTorrents
-//    val foo = torrentDetails
     val options = mapAsJavaMap(
       Map(
-        Printer.COLUMNS -> seqAsJavaList(List("hash", "piecesDownloaded", "peersOn", "peersInactive"))
+        Printer.COLUMNS -> seqAsJavaList(List("name", "piecesDownloaded", "peersOn", "peersInactive"))
 //        Printer.SHORT_NAMES -> true
       )
     ): java.util.Map[String, AnyRef]
 
-    val data = seqAsJavaList(torrentDetails.map {
-      case CmhClient
-            .TorrentDetails(hash, piecesDownloaded, piecesTotal, peersOn, peersConnectedNotActive, peersTotal) =>
+    val data = seqAsJavaList(torrentDetails.toList.map {
+      case (
+            CmhClient.Torrent(_, name),
+            CmhClient
+              .TorrentDetails(piecesDownloaded, piecesTotal, peersOn, peersConnectedNotActive, peersTotal)
+          ) =>
         mapAsJavaMap(
           Map(
-            "hash" -> hash.hex,
+            "name" -> name,
             "piecesDownloaded" -> s"$piecesDownloaded/$piecesTotal",
             "peersOn" -> s"$peersOn/$peersTotal",
             "peersInactive" -> s"$peersConnectedNotActive/$peersTotal"
@@ -145,12 +147,12 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 //    printer.println(options,data);
   }
 
-  private def printTrackerStats(stats: Map[InfoHash, Tracker.Statistics]): Unit = {
+  private def printTrackerStats(stats: Map[CmhClient.Torrent, Tracker.Statistics]): Unit = {
     val options = mapAsJavaMap(
       Map(
         Printer.COLUMNS -> seqAsJavaList(
           List(
-            "hash",
+            "name",
             "totalTrackers",
             "connectionsSent",
             "connectionsReceived",
@@ -165,12 +167,12 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val data = seqAsJavaList {
       stats.toList.map {
         case (
-              infoHash,
+              CmhClient.Torrent(_, name),
               Tracker.Statistics(Tracker.Summary(totalTrackers, cSent, cReceived, aSent, aReceived, peers), _)
             ) =>
           mapAsJavaMap(
             Map(
-              "hash" -> infoHash.hex,
+              "name" -> name,
               "totalTrackers" -> totalTrackers.toString,
               "connectionsSent" -> cSent.toString,
               "connectionsReceived" -> cReceived.toString,

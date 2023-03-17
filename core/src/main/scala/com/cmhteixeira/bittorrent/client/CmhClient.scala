@@ -15,9 +15,9 @@ trait CmhClient {
   def piecesStatus(infoHash: InfoHash): Any
   def peerStatus(infoHash: InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]]
 
-  def statistics: Map[InfoHash, Tracker.Statistics]
+  def statistics: Map[CmhClient.Torrent, Tracker.Statistics]
 
-  def listTorrents: List[CmhClient.TorrentDetails]
+  def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails]
 
   def stop(t: InfoHash): Boolean
   def delete(t: InfoHash): Boolean
@@ -27,8 +27,16 @@ trait CmhClient {
 
 object CmhClient {
 
+  case class Torrent(infoHash: InfoHash, name: String) {
+
+    override def equals(obj: Any): Boolean =
+      obj match {
+        case Torrent(thatInfoHash, _) => thatInfoHash == infoHash
+        case _ => false
+      }
+  }
+
   case class TorrentDetails(
-      infoHash: InfoHash,
       piecesDownloaded: Int,
       piecesTotal: Int,
       peersOn: Int,
