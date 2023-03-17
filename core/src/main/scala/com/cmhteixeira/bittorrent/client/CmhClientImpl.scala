@@ -5,7 +5,7 @@ import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.{HandShaked, TcpConnected}
 import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
 import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
-
+import com.cmhteixeira.bittorrent.tracker.Tracker
 import java.nio.file.{Files, Path}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Future
@@ -14,8 +14,10 @@ import org.slf4j.LoggerFactory
 
 import java.net.InetSocketAddress
 
-class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], swarmFactory: SwarmFactory)
-    extends CmhClient {
+class CmhClientImpl private (
+    torrents: AtomicReference[Map[InfoHash, Swarm]],
+    swarmFactory: SwarmFactory
+) extends CmhClient {
 
   private val logger = LoggerFactory.getLogger("cmhTorrent")
 
@@ -100,6 +102,9 @@ class CmhClientImpl private (torrents: AtomicReference[Map[InfoHash, Swarm]], sw
     logger.info("Shutting down.")
     torrents.get().foreach { case (_, swarm) => swarm.close }
   }
+
+  override def statistics: Map[InfoHash, Tracker.Statistics] =
+    torrents.get().map { case (infoHash, swarm) => infoHash -> swarm.trackerStats }
 }
 
 object CmhClientImpl {

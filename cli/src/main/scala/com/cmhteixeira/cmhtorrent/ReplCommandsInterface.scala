@@ -1,6 +1,8 @@
 package com.cmhteixeira.cmhtorrent
 
+import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.client.CmhClient
+import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.jline.builtins.Completers.OptionCompleter
 import org.jline.builtins.{Options, SyntaxHighlighter}
 import org.jline.console.impl.{DefaultPrinter, JlineCommandRegistry}
@@ -9,16 +11,18 @@ import org.jline.reader.{Completer, LineReader}
 import org.jline.reader.impl.completer.{ArgumentCompleter, NullCompleter, StringsCompleter}
 import org.jline.terminal.Terminal
 import org.jline.utils.{AttributedString, AttributedStyle}
+import org.slf4j.LoggerFactory
 
 import java.nio.file.{Path, Paths}
 import scala.collection.JavaConverters.mapAsJavaMap
 import scala.collection.JavaConverters.seqAsJavaList
 import scala.collection.JavaConverters.collectionAsScalaIterable
-import scala.util.Try
+import scala.util.{Failure, Success, Try}
 
 class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDir: Path, printer: Printer)
     extends JlineCommandRegistry
     with CommandRegistry {
+  private val logger = LoggerFactory.getLogger("RelpCommandsInterface")
 
   var reader: LineReader = null
   val syntaxHighlighter = SyntaxHighlighter.build("asd")
@@ -30,7 +34,8 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       "download" -> new CommandMethods(a => tDownloadExecute(a), a => tdownloadCompleter(a)),
       "list" -> new CommandMethods(a => listExecute(a), a => defaultCompleter(a)),
       "details" -> new CommandMethods(a => detailsExecute(a), a => defaultCompleter(a)),
-      "peers" -> new CommandMethods(a => peersExecute(a), a => defaultCompleter(a))
+      "peers" -> new CommandMethods(a => peersExecute(a), a => defaultCompleter(a)),
+      "stats" -> new CommandMethods(a => stats(a), a => defaultCompleter(a))
 //      "tput" -> new CommandMethods(this::tput, this::tputCompleter),
 //    "testkey" -> new CommandMethods(this::testkey, this::defaultCompleter),
 //    "clear" -> new CommandMethods(this::clear, this::defaultCompleter),
@@ -56,6 +61,24 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 //      syntaxHighlighter.highlight(new AttributedString(res, new AttributedStyle().background(7))).println(terminal())
     } else
       terminal().writer().println("Command takes no arguments.")
+  }
+
+  private def stats(input: CommandInput): Unit = {
+    val usage: Array[String] =
+      Array(
+        "stats -  display statistics about internals of client",
+        "Usage: stats",
+        "  -? --help                       Displays command help",
+        " --tracker                        Display statistics and state of the tracker."
+      )
+    val opt: Options = parseOptions(usage, input.xargs())
+    Try(opt.isSet("tracker")) match {
+      case Failure(exception) =>
+        logger.error(s"When calling stats. Input was: ${input.args().mkString("Array(", ", ", ")")}", exception)
+      case Success(true) => printTrackerStats(torrentClient.statistics)
+
+      case Success(false) => terminal().writer().println(s"Not implemented")
+    }
   }
 
   private def peersExecute(input: CommandInput): Unit =
@@ -86,7 +109,7 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 //    val foo = torrentDetails
     val options = mapAsJavaMap(
       Map(
-        Printer.COLUMNS -> seqAsJavaList(List("hash", "piecesDownloaded", "peersOn", "peersInactive")),
+        Printer.COLUMNS -> seqAsJavaList(List("hash", "piecesDownloaded", "peersOn", "peersInactive"))
 //        Printer.SHORT_NAMES -> true
       )
     ): java.util.Map[String, AnyRef]
@@ -120,6 +143,46 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 //    options.put(Printer.SHORT_NAMES, true);
 //    options.put(Printer.VALUE_STYLE, "classpath:/org/jline/example/gron.nanorc");
 //    printer.println(options,data);
+  }
+
+  private def printTrackerStats(stats: Map[InfoHash, Tracker.Statistics]): Unit = {
+    val options = mapAsJavaMap(
+      Map(
+        Printer.COLUMNS -> seqAsJavaList(
+          List(
+            "hash",
+            "totalTrackers",
+            "connectionsSent",
+            "connectionsReceived",
+            "announceSent",
+            "announceReceived",
+            "distinctPeers"
+          )
+        )
+      )
+    ): java.util.Map[String, AnyRef]
+
+    val data = seqAsJavaList {
+      stats.toList.map {
+        case (
+              infoHash,
+              Tracker.Statistics(Tracker.Summary(totalTrackers, cSent, cReceived, aSent, aReceived, peers), _)
+            ) =>
+          mapAsJavaMap(
+            Map(
+              "hash" -> infoHash.hex,
+              "totalTrackers" -> totalTrackers.toString,
+              "connectionsSent" -> cSent.toString,
+              "connectionsReceived" -> cReceived.toString,
+              "announceSent" -> aSent.toString,
+              "announceReceived" -> aReceived.toString,
+              "distinctPeers" -> peers.toString
+            )
+          )
+      }
+    }
+
+    printer.println(options, data)
   }
 
   private def detailsCompleter(command: String): java.util.List[Completer] = ???

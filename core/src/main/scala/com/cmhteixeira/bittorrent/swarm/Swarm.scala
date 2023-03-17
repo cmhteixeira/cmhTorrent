@@ -2,6 +2,7 @@ package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.swarm.Swarm.PeerState
+import com.cmhteixeira.bittorrent.tracker.Tracker
 
 import java.net.InetSocketAddress
 import java.nio.file.Path
@@ -10,6 +11,7 @@ import scala.concurrent.Future
 trait Swarm {
   def getPeers: Map[InetSocketAddress, PeerState]
   def getPieces: List[Swarm.PieceState]
+  def trackerStats: Tracker.Statistics
 
   def downloadCompleted: Future[Path]
 

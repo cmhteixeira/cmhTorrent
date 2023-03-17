@@ -225,6 +225,14 @@ private[bittorrent] class SwarmImpl private (
         else logger.info(s"Piece $pieceIndex has been verified.")
     }
   }
+
+  override def trackerStats: Tracker.Statistics =
+    tracker.statistics.get(torrent.infoHash) match {
+      case Some(stats) => stats
+      case None =>
+        logger.warn("Tracker could not find statistics for this torrent. Very bad.")
+        Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0, 0), Map.empty)
+    }
 }
 
 object SwarmImpl {

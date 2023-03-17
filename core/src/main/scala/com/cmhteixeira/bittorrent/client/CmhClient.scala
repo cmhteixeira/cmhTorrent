@@ -2,6 +2,8 @@ package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent}
+import com.cmhteixeira.bittorrent.tracker.Tracker
+import com.cmhteixeira.bittorrent.tracker.Tracker.TrackerState
 
 import java.net.InetSocketAddress
 import java.nio.file.Path
@@ -12,6 +14,8 @@ trait CmhClient {
   def downloadTorrent(t: Path, p: Path): Either[CmhClient.SubmissionError, Future[Path]]
   def piecesStatus(infoHash: InfoHash): Any
   def peerStatus(infoHash: InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]]
+
+  def statistics: Map[InfoHash, Tracker.Statistics]
 
   def listTorrents: List[CmhClient.TorrentDetails]
 

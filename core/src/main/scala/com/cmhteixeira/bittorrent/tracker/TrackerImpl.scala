@@ -269,10 +269,32 @@ private[tracker] final class TrackerImpl private (
         }.distinct
       case _ => List.empty
     }
+
+  def statistics2(foo: Foo): Tracker.Statistics =
+    foo match {
+      case Submitted => Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0, 0), Map.empty)
+      case Tiers(underlying) =>
+        underlying
+          .foldLeft[(Set[InetSocketAddress], Tracker.Statistics)]((Set.empty, TrackerImpl.emptyStatistics)) {
+            case ((acc, stats: Tracker.Statistics), (tracker, _: ConnectSent)) => (acc, stats.addConnectSent(tracker))
+            case ((acc, stats: Tracker.Statistics), (tracker, _: ConnectReceived)) =>
+              (acc, stats.addConnectReceived(tracker))
+            case ((acc, stats: Tracker.Statistics), (tracker, _: AnnounceSent)) => (acc, stats.addAnnounceSent(tracker))
+            case ((acc, stats: Tracker.Statistics), (tracker, AnnounceReceived(_, _, peers))) =>
+              val distinct = acc ++ peers.toSet
+              (distinct, stats.addAnnounceReceived(tracker, peers.size, distinct.size))
+          }
+          ._2
+    }
+
+  override def statistics: Map[InfoHash, Tracker.Statistics] =
+    state.get().map { case (infoHash, foo) => infoHash -> statistics2(foo) }
+
 }
 
 object TrackerImpl {
 
+  private val emptyStatistics = Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0, 0), Map.empty)
   case class Config(port: Int, peerId: PeerId, key: Int)
 
   private val retries: Int => Int = n => 15 * (2 ^ n)
