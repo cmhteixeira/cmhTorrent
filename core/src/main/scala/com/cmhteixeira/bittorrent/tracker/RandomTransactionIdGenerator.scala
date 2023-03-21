@@ -5,7 +5,7 @@ import java.security.SecureRandom
 
 private[tracker] class RandomTransactionIdGenerator private (s: SecureRandom) extends TransactionIdGenerator {
 
-  override def newTransactionId(): Int = {
+  override def txnId(): Int = {
     val byteBuffer = ByteBuffer.allocate(4)
     s.nextBytes(byteBuffer.array())
     byteBuffer.getInt

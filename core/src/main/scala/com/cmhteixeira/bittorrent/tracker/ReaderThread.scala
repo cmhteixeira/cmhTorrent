@@ -18,13 +18,13 @@ private[tracker] class ReaderThread private (
 
   @tailrec
   override final def run(): Unit = {
-    logger.info(s"UDP OS buffer: ${udpSocket.getReceiveBufferSize}.")
     val packet = new DatagramPacket(ByteBuffer.allocate(maximumUdpPacketSize).array(), maximumUdpPacketSize)
     Try(udpSocket.receive(packet)) match {
       case Failure(exception) =>
         logger.warn("Called receive on socket. Waiting 500 milliseconds and then continuing.", exception)
         Thread.sleep(500)
         run()
+      //todo: How to close this?
       case Success(_) =>
         processPacket(packet)
         run()
@@ -64,12 +64,13 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
     currentState.flatMap {
-      case (infoHash, tiers @ Tiers(_)) => tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
+      case (infoHash, tiers @ Tiers(_, _)) =>
+        tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
       case (_, Submitted) => List.empty
     }.toList match {
       case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
-      case (infoHash, tiers, ConnectSent(_, channel, _)) :: Nil =>
+      case (infoHash, tiers, ConnectSent(_, channel, checkTasks, _)) :: Nil =>
         val newState = currentState + (infoHash -> tiers.updateEntry(
           origin,
           ConnectReceived(connectResponse.connectionId, timestamp)
@@ -79,6 +80,7 @@ private[tracker] class ReaderThread private (
           logger.info(
             s"Received Connect response from '$origin' for '$infoHash'. TxnId: '$txnId'. Connection Id: '$connectId'."
           )
+          checkTasks.cancel(true) // no need to check
           channel.success(())
         }
     }
@@ -89,21 +91,23 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val AnnounceResponse(_, _, _, leechers, seeders, peers) = announceResponse
     currentState.flatMap {
-      case (infoHash, tiers @ Tiers(_)) =>
+      case (infoHash, tiers @ Tiers(_, _)) =>
         tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
       case (_, Submitted) => List.empty
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
-      case (infoHash, tiers, AnnounceSent(txnId, _, _, _)) :: Nil =>
+      case (infoHash, tiers, AnnounceSent(txnId, _, _, checkTask, _)) :: Nil =>
         val newState =
           currentState + (infoHash -> tiers.updateEntry(origin, AnnounceReceived(leechers, seeders, peers)))
 
         if (!state.compareAndSet(currentState, newState)) processAnnounce(origin, announceResponse)
-        else
+        else {
           logger.info(
             s"Received Announce response from '$origin' for torrent '$infoHash' with txnId. '$txnId': ${announceResponse.peers.size} peers."
           )
+          checkTask.cancel(true)
+        }
     }
   }
 }
