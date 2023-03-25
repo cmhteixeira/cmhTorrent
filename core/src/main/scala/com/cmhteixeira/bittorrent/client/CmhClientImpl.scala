@@ -35,13 +35,13 @@ class CmhClientImpl private (
       t: Path,
       p: Path
   ): Either[CmhClient.SubmissionError, Future[Path]] = {
-    if (t.toFile.exists()) {
+    val res = if (t.toFile.exists()) {
       parseTorrentFromFile(t) match {
         case Left(error) => Left(CmhClient.ParsingError(error))
         case Right(torrent) => Right(downloadTorrent(torrent, p))
       }
     } else Left(CmhClient.FileDoesNotExist)
-
+    res
   }
 
   private def parseTorrentFromFile(path: Path): Either[String, SwarmTorrent] =

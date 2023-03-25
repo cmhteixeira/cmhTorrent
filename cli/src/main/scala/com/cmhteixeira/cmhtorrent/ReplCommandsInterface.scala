@@ -13,7 +13,7 @@ import org.jline.terminal.Terminal
 import org.jline.utils.{AttributedString, AttributedStyle}
 import org.slf4j.LoggerFactory
 
-import java.nio.file.{Path, Paths}
+import java.nio.file.{Files, Path, Paths}
 import scala.collection.JavaConverters.mapAsJavaMap
 import scala.collection.JavaConverters.seqAsJavaList
 import scala.collection.JavaConverters.collectionAsScalaIterable
@@ -207,16 +207,33 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     args match {
       case Nil => terminal().writer().println("You must provide the path to the torrent file.")
       case head :: Nil =>
-        torrentClient.downloadTorrent(
-          Paths.get(head),
-          downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
-        ) match {
-          case Left(CmhClient.FileDoesNotExist) =>
-            terminal().writer().println(s"The torrent file you provided ($head) does not exist.")
-          case Left(CmhClient.ParsingError(error)) =>
-            terminal().writer().println(s"There was an issue parsing the file you provided ($head): '$error'")
-          case Right(_) => ()
-        }
+        val torrentPath = Paths.get(head)
+        val isDir = Files.isDirectory(torrentPath)
+        if (isDir) {
+          val allTorrentResults = torrentPath.toFile
+            .listFiles((file, n) => n.endsWith(".torrent"))
+            .toList
+            .map(_.toPath)
+            .map { torrentPath =>
+              torrentPath -> torrentClient.downloadTorrent(
+                torrentPath,
+                downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
+              )
+            }
+          val failed = allTorrentResults.collect { case (path, Left(_)) => path }
+          if (failed.nonEmpty)
+            failed.foreach(path => terminal().writer().println(s"Error submitting torrent $path."))
+        } else
+          torrentClient.downloadTorrent(
+            torrentPath,
+            downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
+          ) match {
+            case Left(CmhClient.FileDoesNotExist) =>
+              terminal().writer().println(s"The torrent file you provided ($head) does not exist.")
+            case Left(CmhClient.ParsingError(error)) =>
+              terminal().writer().println(s"There was an issue parsing the file you provided ($head): '$error'")
+            case Right(_) => ()
+          }
       case other => terminal().writer().println("You can only provide 1 torrent file at a time.")
     }
   }
@@ -389,5 +406,5 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
 object ReplCommandsInterface {
 
   def apply(cmhClient: CmhClient, defaultDir: Path): ReplCommandsInterface =
-    new ReplCommandsInterface(cmhClient, defaultDir, new DefaultPrinter(null)) //todo: Fix this
+    new ReplCommandsInterface(cmhClient, defaultDir, new DefaultPrinter(null)) // todo: Fix this
 }

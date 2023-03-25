@@ -239,7 +239,7 @@ object SwarmImpl {
 
   type PeerFactory = InetSocketAddress => Peer
 
-  private val maxBlocksAtOnce = 100
+  private val maxBlocksAtOnce = 500
   case class Configuration(downloadDir: Path, blockSize: Int)
 
   def apply(

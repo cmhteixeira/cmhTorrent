@@ -34,6 +34,7 @@ package object bencode extends Parser with Serializer {
       case b @ a :: xs if a.isDigit => parseByteString(b)
       case 'l' :: xs => parseList(xs, List.empty)
       case 'd' :: xs => parseDict(xs, Map.empty)
+      case _ => Left(ParsingFailure.DataAfterInteger)
     }
   }
 
