@@ -22,13 +22,6 @@ object Tracker {
         trackers = trackers + (tracker -> TrackerState.ConnectSent)
       )
 
-    def addConnectReceived(tracker: InetSocketAddress): Statistics =
-      Statistics(
-        summary =
-          summary.copy(totalTrackers = summary.totalTrackers + 1, connectionReceived = summary.connectionReceived + 1),
-        trackers = trackers + (tracker -> TrackerState.ConnectReceived)
-      )
-
     def addAnnounceSent(tracker: InetSocketAddress): Statistics =
       Statistics(
         summary = summary.copy(totalTrackers = summary.totalTrackers + 1, announceSent = summary.announceSent + 1),
@@ -49,7 +42,6 @@ object Tracker {
   case class Summary(
       totalTrackers: Int,
       connectionSent: Int,
-      connectionReceived: Int,
       announceSent: Int,
       announceReceived: Int,
       distinctPeers: Int
@@ -59,7 +51,6 @@ object Tracker {
   object TrackerState {
 
     case object ConnectSent extends TrackerState
-    case object ConnectReceived extends TrackerState
     case object AnnounceSent extends TrackerState
     case class AnnounceReceived(numberPeers: Int) extends TrackerState
   }

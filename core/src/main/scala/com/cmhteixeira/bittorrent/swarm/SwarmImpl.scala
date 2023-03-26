@@ -74,16 +74,15 @@ private[bittorrent] class SwarmImpl private (
     val newPieces = randomGen
       .shuffle(currentState.missingPieces)
       .map(a => a -> torrent.splitInBlocks(a, config.blockSize))
-      .foldLeft[List[(Int, List[(BlockRequest, Boolean)])]](List.empty) {
-        case (acc, (pieceIndex, blockPartition)) =>
-          val blockRequests = blockPartition.map { case (offSet, len) => BlockRequest(pieceIndex, offSet, len) }
-          val totalNewBlocks = acc.flatMap(_._2).size
-          if (totalNewBlocks >= numBlocksNewPieces) acc
-          else {
-            val blocks = math.min(blockRequests.size, numBlocksNewPieces - totalNewBlocks)
-            val (toDownloadNow, toDownloadLater) = blockRequests.splitAt(blocks)
-            acc :+ (pieceIndex, toDownloadNow.map(_ -> true) ::: toDownloadLater.map(_ -> false))
-          }
+      .foldLeft[List[(Int, List[(BlockRequest, Boolean)])]](List.empty) { case (acc, (pieceIndex, blockPartition)) =>
+        val blockRequests = blockPartition.map { case (offSet, len) => BlockRequest(pieceIndex, offSet, len) }
+        val totalNewBlocks = acc.flatMap(_._2).size
+        if (totalNewBlocks >= numBlocksNewPieces) acc
+        else {
+          val blocks = math.min(blockRequests.size, numBlocksNewPieces - totalNewBlocks)
+          val (toDownloadNow, toDownloadLater) = blockRequests.splitAt(blocks)
+          acc :+ (pieceIndex, toDownloadNow.map(_ -> true) ::: toDownloadLater.map(_ -> false))
+        }
       }
     val newBlocks = randomGen.shuffle(missingBlocks).take(numBlocksExistingPieces)
 
@@ -106,12 +105,11 @@ private[bittorrent] class SwarmImpl private (
           if (!pieces.compareAndSet(currentState, newState)) updatePieces()
           else {
             newBlocksToDownload.foreach(blockRequest => downloadBlock(blockRequest))
-            newPiecesToDownload.foreach {
-              case (_, blocks) =>
-                blocks.foreach {
-                  case (blockRequest, download) if download => downloadBlock(blockRequest)
-                  case _ => ()
-                }
+            newPiecesToDownload.foreach { case (_, blocks) =>
+              blocks.foreach {
+                case (blockRequest, download) if download => downloadBlock(blockRequest)
+                case _ => ()
+              }
             }
           }
       }
@@ -131,14 +129,14 @@ private[bittorrent] class SwarmImpl private (
 
   private def timeout[A](fut: Future[A]): Future[A] = {
     val promise = Promise[A]()
-    scheduler.schedule( //todo: Check if usage of try-complete is appropriate
+    scheduler.schedule( // todo: Check if usage of try-complete is appropriate
       new Runnable { override def run(): Unit = promise.tryFailure(new TimeoutException("Timeout after 30 seconds.")) },
       30,
       TimeUnit.SECONDS
     )
     fut.onComplete(promise.tryComplete)(
       mainExecutor
-    ) //todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
+    ) // todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
     promise.future
   }
 
@@ -155,8 +153,8 @@ private[bittorrent] class SwarmImpl private (
         torrent.fileChunks(blockRequest.index, blockRequest.offSet, pieceBlock) match {
           case Some(files) =>
             implicit val ec: ExecutionContext = mainExecutor
-            files.traverse {
-              case FileChunk(path, offset, block) => fileManager.write(path, offset, block)
+            files.traverse { case FileChunk(path, offset, block) =>
+              fileManager.write(path, offset, block)
             } onComplete {
               case Success(_) =>
                 blockDone(blockRequest)
@@ -231,7 +229,7 @@ private[bittorrent] class SwarmImpl private (
       case Some(stats) => stats
       case None =>
         logger.warn("Tracker could not find statistics for this torrent. Very bad.")
-        Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0, 0), Map.empty)
+        Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0), Map.empty)
     }
 }
 

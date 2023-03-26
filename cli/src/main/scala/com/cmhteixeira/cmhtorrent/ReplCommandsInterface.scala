@@ -168,14 +168,13 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       stats.toList.map {
         case (
               CmhClient.Torrent(_, name),
-              Tracker.Statistics(Tracker.Summary(totalTrackers, cSent, cReceived, aSent, aReceived, peers), _)
+              Tracker.Statistics(Tracker.Summary(totalTrackers, cSent, aSent, aReceived, peers), _)
             ) =>
           mapAsJavaMap(
             Map(
               "name" -> name,
               "totalTrackers" -> totalTrackers.toString,
               "connectionsSent" -> cSent.toString,
-              "connectionsReceived" -> cReceived.toString,
               "announceSent" -> aSent.toString,
               "announceReceived" -> aReceived.toString,
               "distinctPeers" -> peers.toString

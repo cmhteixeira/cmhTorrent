@@ -24,7 +24,7 @@ private[tracker] class ReaderThread private (
         logger.warn("Called receive on socket. Waiting 500 milliseconds and then continuing.", exception)
         Thread.sleep(500)
         run()
-      //todo: How to close this?
+      // todo: How to close this?
       case Success(_) =>
         processPacket(packet)
         run()
@@ -59,37 +59,31 @@ private[tracker] class ReaderThread private (
       )
   }
 
-  @tailrec
   private def processConnect(origin: InetSocketAddress, connectResponse: ConnectResponse, timestamp: Long): Unit = {
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
-    currentState.flatMap {
-      case (infoHash, tiers @ Tiers(_, _)) =>
-        tiers.connectResponse(origin, connectResponse).map(a => (infoHash, tiers, a))
-      case (_, Submitted) => List.empty
-    }.toList match {
-      case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
-      case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
-      case (infoHash, tiers, ConnectSent(_, channel, checkTasks, _)) :: Nil =>
-        val newState = currentState + (infoHash -> tiers.updateEntry(
-          origin,
-          ConnectReceived(connectResponse.connectionId, timestamp)
-        ))
-        if (!state.compareAndSet(currentState, newState)) processConnect(origin, connectResponse, timestamp)
-        else {
-          logger.info(
-            s"Received Connect response from '$origin' for '$infoHash'. TxnId: '$txnId'. Connection Id: '$connectId'."
-          )
-          checkTasks.cancel(true) // no need to check
-          channel.success(())
+    currentState.toList.flatMap {
+      case (hash, Tiers(underlying, _)) =>
+        underlying.get(origin) match {
+          case Some(conSent @ ConnectSent(txnId, _)) if txnId == connectResponse.transactionId => List(hash -> conSent)
+          case _ => List.empty
         }
+      case _ => List.empty
+    } match {
+      case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
+      case (infoHash, ConnectSent(_, channel)) :: Nil =>
+        logger.info(s"Matched Connect response: Torrent=$infoHash,tracker=$origin,txdId=$txnId,connId=$connectId")
+        channel.success((connectResponse, timestamp))
+      case moreThanOne =>
+        logger.warn(
+          s"Connect response (txdId=${connectResponse.transactionId}) matches more than 1 torrent: [${moreThanOne.map(p => p._1).mkString(", ")}]."
+        )
     }
   }
 
-  @tailrec
   private def processAnnounce(origin: InetSocketAddress, announceResponse: AnnounceResponse): Unit = {
     val currentState = state.get()
-    val AnnounceResponse(_, _, _, leechers, seeders, peers) = announceResponse
+    val AnnounceResponse(_, _, _, _, _, peers) = announceResponse
     currentState.flatMap {
       case (infoHash, tiers @ Tiers(_, _)) =>
         tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
@@ -97,17 +91,10 @@ private[tracker] class ReaderThread private (
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
-      case (infoHash, tiers, AnnounceSent(txnId, _, _, checkTask, _)) :: Nil =>
-        val newState =
-          currentState + (infoHash -> tiers.updateEntry(origin, AnnounceReceived(leechers, seeders, peers)))
-
-        if (!state.compareAndSet(currentState, newState)) processAnnounce(origin, announceResponse)
-        else {
-          logger.info(
-            s"Received Announce response from '$origin' for torrent '$infoHash' with txnId. '$txnId': ${announceResponse.peers.size} peers."
-          )
-          checkTask.cancel(true)
-        }
+      case (infoHash, tiers, AnnounceSent(txnId, _, channel, _)) :: Nil if txnId == announceResponse.transactionId =>
+        logger.info(s"Announce response from '$origin' for '$infoHash' with txnId '$txnId': ${peers.size} peers.")
+        channel.trySuccess(announceResponse)
+      case (infoHash, tiers, AnnounceSent(txnId, _, channel, _)) :: Nil => logger.warn("Bla blabla")
     }
   }
 }
