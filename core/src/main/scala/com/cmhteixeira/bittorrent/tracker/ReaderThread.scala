@@ -31,31 +31,31 @@ private[tracker] class ReaderThread private (
     }
   }
 
-  private def processPacket(i: DatagramPacket): Unit = {
-    val payloadSize = i.getLength
+  private def processPacket(dg: DatagramPacket): Unit = {
+    val payloadSize = dg.getLength
     if (payloadSize == 16) // could be ConnectResponse
-      ConnectResponse.deserialize(i.getData) match {
+      ConnectResponse.deserialize(dg.getData) match {
         case Left(error) =>
-          val msg =
-            s"Received packet from '${i.getSocketAddress}' with 16 bytes, but not possible to deserialize into an Connect response: '$error'."
-          logger.warn(msg)
+          logger.warn(
+            s"Received packet from '${dg.getSocketAddress}' with 16 bytes, but not possible to deserialize into an Connect response: '$error'."
+          )
         case Right(connectResponse) =>
-          logger.info(s"Received potential Connect response from '${i.getSocketAddress}'.")
-          processConnect(i.getSocketAddress.asInstanceOf[InetSocketAddress], connectResponse, System.nanoTime())
+          logger.info(s"Received potential Connect response from '${dg.getSocketAddress}'.")
+          processConnect(dg.getSocketAddress.asInstanceOf[InetSocketAddress], connectResponse, System.nanoTime())
       }
     else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) // could be an AnnounceResponse
-      AnnounceResponse.deserialize(i.getData, payloadSize) match {
+      AnnounceResponse.deserialize(dg.getData, payloadSize) match {
         case Left(value) =>
-          val msg =
-            s"Received packet from '${i.getSocketAddress}' with $payloadSize bytes, but couldn't be deserialized into an Announce response: '$value'."
-          logger.warn(msg)
+          logger.warn(
+            s"Received packet from '${dg.getSocketAddress}' with $payloadSize bytes, but couldn't be deserialized into an Announce response: '$value'."
+          )
         case Right(announceResponse) =>
-          logger.info(s"Received potential Announce response from '${i.getSocketAddress}' with $payloadSize bytes.")
-          processAnnounce(i.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
+          logger.info(s"Received potential Announce response from '${dg.getSocketAddress}' with $payloadSize bytes.")
+          processAnnounce(dg.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
       }
     else
       logger.warn(
-        s"Received packet with $payloadSize bytes from '${i.getSocketAddress}'. It does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'."
+        s"Received packet with $payloadSize bytes from '${dg.getSocketAddress}'. It does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'."
       )
   }
 
@@ -73,10 +73,10 @@ private[tracker] class ReaderThread private (
       case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
       case (infoHash, ConnectSent(_, channel)) :: Nil =>
         logger.info(s"Matched Connect response: Torrent=$infoHash,tracker=$origin,txdId=$txnId,connId=$connectId")
-        channel.success((connectResponse, timestamp))
-      case moreThanOne =>
+        channel.trySuccess((connectResponse, timestamp))
+      case xs =>
         logger.warn(
-          s"Connect response (txdId=${connectResponse.transactionId}) matches more than 1 torrent: [${moreThanOne.map(p => p._1).mkString(", ")}]."
+          s"Connect response (txdId=${connectResponse.transactionId}) matches more than 1 torrent: [${xs.map(_._1).mkString(", ")}]."
         )
     }
   }

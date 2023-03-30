@@ -12,7 +12,10 @@ import scala.annotation.tailrec
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException, blocking}
 import scala.util.{Failure, Success, Try}
+import scala.concurrent.Future.failed
 
+// TODO Problems:
+// 1. If we have the same tracker being used for multiple torrents, we don't re-use connection.
 private[tracker] final class TrackerImpl private (
     socket: DatagramSocket,
     state: AtomicReference[Map[InfoHash, State]],
@@ -47,8 +50,14 @@ private[tracker] final class TrackerImpl private (
       case Some(udpHostnameAndPort) =>
         udpHostnameAndPort.flatten.toList.distinct.map(hostAndPort => hostAndPort -> resolveHost(hostAndPort))
       case None => List(torrent.announce -> resolveHost(torrent.announce))
-    }).foreach { case (udpSocket, result) =>
-      result.onComplete(registerStateAndSend(torrent.infoHash, udpSocket, _))(mainExecutor)
+    }).foreach { case (tracker, result) =>
+      result
+        .flatMap(socketAddress =>
+          if (socketAddress.isUnresolved)
+            failed(new IllegalArgumentException(s"Tracker '${tracker.hostName}:${tracker.port}' couldn't be resolved."))
+          else Future.successful(socketAddress)
+        )(mainExecutor)
+        .onComplete(registerStateAndSend(torrent.infoHash, tracker, _))(mainExecutor)
     }
   }
 
@@ -60,10 +69,6 @@ private[tracker] final class TrackerImpl private (
         val newState = currentState + (infoHash -> state4Torrent.newTrackerUnresolved(udpSocket))
         if (!state.compareAndSet(currentState, newState)) registerStateAndSend(infoHash, udpSocket, a)
         else logger.warn(s"Tracker '${udpSocket.hostName}:${udpSocket.port}' could not be resolved.", exception)
-      case (Some(state4Torrent), Success(inetSocket)) if inetSocket.isUnresolved =>
-        val newState = currentState + (infoHash -> state4Torrent.newTrackerUnresolved(udpSocket))
-        if (!state.compareAndSet(currentState, newState)) registerStateAndSend(infoHash, udpSocket, a)
-        else logger.warn(s"Tracker '${udpSocket.hostName}:${udpSocket.port}' could not be resolved.")
       case (Some(state4Torrent), Success(inetSocket)) =>
         val socketAddressWithNoHostname = // we don't want association with a particular hostname
           new InetSocketAddress(InetAddress.getByAddress(inetSocket.getAddress.getAddress), inetSocket.getPort)
@@ -74,7 +79,7 @@ private[tracker] final class TrackerImpl private (
     }
   }
 
-  private def sendConnect(txnId: Int, tracker: InetSocketAddress): Unit = {
+  private def sendConnectDownTheWire(txnId: Int, tracker: InetSocketAddress): Unit = {
     val payload = ConnectRequest(txnId).serialize
     Try(socket.send(new DatagramPacket(payload, payload.length, tracker))) match {
       case Failure(exception) =>
@@ -84,9 +89,9 @@ private[tracker] final class TrackerImpl private (
     }
   }
 
-  private def sendAnnounce(infoHash: InfoHash, connectionId: Long, txnId: Int, tracker: InetSocketAddress): Unit = {
+  private def sendAnnounceDownTheWire(infoHash: InfoHash, conId: Long, txnId: Int, tracker: InetSocketAddress): Unit = {
     val announceRequest = AnnounceRequest(
-      connectionId = connectionId,
+      connectionId = conId,
       transactionId = txnId,
       action = AnnounceRequest.Announce,
       infoHash = infoHash,
@@ -102,13 +107,10 @@ private[tracker] final class TrackerImpl private (
     )
     val payload = announceRequest.serialize
     Try(socket.send(new DatagramPacket(payload, payload.length, tracker))) match {
-      case Failure(exception) =>
-        logger.warn(
-          s"Sending Announce to '$tracker' for '$infoHash' with connId '$connectionId' and txnId '$txnId'.",
-          exception
-        )
+      case Failure(error) =>
+        logger.warn(s"Sending Announce to '$tracker' for '$infoHash' with connId '$conId' and txnId '$txnId'.", error)
       case Success(_) =>
-        logger.info(s"Sent Announce to '$tracker' for '$infoHash' with connId '$connectionId' and txnId '$txnId'.")
+        logger.info(s"Sent Announce to '$tracker' for '$infoHash' with connId '$conId' and txnId '$txnId'.")
     }
   }
 
@@ -148,7 +150,7 @@ private[tracker] final class TrackerImpl private (
         val newState = currentState + (infoHash -> newState4Torrent)
         if (!state.compareAndSet(currentState, newState)) sendConnect(infoHash, tracker, n)
         else {
-          sendConnect(txdId, tracker)
+          sendConnectDownTheWire(txdId, tracker)
           timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith { case _: TimeoutException =>
             sendConnect(infoHash, tracker, n + 1) // todo: stackoverflow risk
           }(mainExecutor)
@@ -175,7 +177,7 @@ private[tracker] final class TrackerImpl private (
         val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
         if (!state.compareAndSet(currentState, newState)) sendAnnounce(infoHash, tracker, connectResponse, timestamp, n)
         else {
-          sendAnnounce(infoHash, connectResponse.connectionId, txdId, tracker)
+          sendAnnounceDownTheWire(infoHash, connectResponse.connectionId, txdId, tracker)
           timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith { case _: TimeoutException =>
             if (limitConnectionId(timestamp))
               Future.failed(

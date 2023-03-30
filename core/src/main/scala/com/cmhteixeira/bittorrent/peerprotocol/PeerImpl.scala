@@ -164,7 +164,7 @@ private[peerprotocol] final class PeerImpl private (
     }
   }
 
-  private def sayIAmInterest: Try[Unit] = { //todo: improve this.
+  private def sayIAmInterest: Try[Unit] = { // todo: improve this.
     logger.info("Informing I am interested.")
     val int = ByteBuffer.allocate(5).putInt(1).put(0x2: Byte).array()
     Try(socket.getOutputStream.write(int))
@@ -178,6 +178,11 @@ private[peerprotocol] final class PeerImpl private (
       case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField.get(index)
       case _ => false
     }
+
+  override def isUnchoked: Boolean = state.get() match {
+    case Handshaked(_, _, _, _, PeerState(ConnectionState(isChocked, _), _), _) if !isChocked => true
+    case _ => false
+  }
 
   override def pieces: BitVector =
     state.get() match {
@@ -202,7 +207,7 @@ private[peerprotocol] final class PeerImpl private (
           }
           logger.info("???")
           handshaked.me.requests.collect {
-            case (_, Sent(promiseCompletion)) => //todo: Check if usage of try-complete is appropriate
+            case (_, Sent(promiseCompletion)) => // todo: Check if usage of try-complete is appropriate
               promiseCompletion.tryFailure(new Exception(s"Impossible to complete: $msg."))
           }
           socket.close()

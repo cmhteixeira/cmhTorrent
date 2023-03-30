@@ -117,7 +117,8 @@ private[bittorrent] class SwarmImpl private (
   }
 
   private def downloadBlock(blockR: BlockRequest): Unit = {
-    val relevantPeers = peers.get().collect { case (_, Active(peer)) if peer.hasPiece(blockR.index) => peer }.toList
+    val relevantPeers =
+      peers.get().collect { case (_, Active(peer)) if peer.hasPiece(blockR.index) && peer.isUnchoked => peer }.toList
     randomGen.shuffle(relevantPeers) match {
       case Nil =>
         logger.info(s"Trying to download '$blockR'. No peer has piece.")
