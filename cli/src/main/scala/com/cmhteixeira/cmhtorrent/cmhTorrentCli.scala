@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.global
+import scala.concurrent.duration.DurationInt
 
 object cmhTorrentCli extends App {
   private val peerId = PeerId("cmh-4234567891011121").getOrElse(throw new IllegalArgumentException("Peer id is bad."))
@@ -30,18 +31,19 @@ object cmhTorrentCli extends App {
       }
     )
 
-  private val peersThreadPool = ExecutionContext.fromExecutorService(Executors.newCachedThreadPool(new ThreadFactory {
-    val counter = new AtomicLong(0)
+  private def threadPool(prefix: String) =
+    ExecutionContext.fromExecutorService(Executors.newCachedThreadPool(new ThreadFactory {
+      val counter = new AtomicLong(0)
 
-    override def newThread(r: Runnable): Thread =
-      new Thread(r, s"peers-${counter.getAndIncrement()}")
-  }))
+      override def newThread(r: Runnable): Thread =
+        new Thread(r, s"$prefix-${counter.getAndIncrement()}")
+    }))
 
   private val tracker = TrackerImpl(
-    global,
+    threadPool("trackerPool-"),
     scheduler("tracker", 20),
     RandomTransactionIdGenerator(SecureRandom.getInstanceStrong),
-    TrackerImpl.Config(port = 8083, peerId = peerId, key = 123)
+    TrackerImpl.Config(port = 8083, peerId = peerId, key = 123, 5 second)
   )
 
   private val swarmFactory =
@@ -55,7 +57,7 @@ object cmhTorrentCli extends App {
             peerSocket = inetSocketAddress,
             config = PeerImpl.Config(1000, peerId),
             infoHash = swarmTorrent.infoHash,
-            peersThreadPool = peersThreadPool,
+            peersThreadPool = threadPool("peers"),
             scheduledExecutorService = scheduler("Peer-", 3),
             numberOfPieces = swarmTorrent.info.pieces.size
           ),

@@ -1,7 +1,7 @@
 package com.cmhteixeira.bittorrent.tracker
 
 import cats.implicits.catsSyntaxFlatten
-import com.cmhteixeira.bittorrent.tracker.TrackerImpl.{Config, connAgeSec, limitConnectionId}
+import com.cmhteixeira.bittorrent.tracker.TrackerImpl.{Config, Connection, connAgeSec, limitConnectionId}
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId, UdpSocket}
 import org.slf4j.LoggerFactory
 
@@ -30,7 +30,7 @@ private[tracker] final class TrackerImpl private (
   def submit(torrent: Torrent): Unit = {
     val currentState = state.get()
     if (currentState.exists { case (hash, _) => hash == torrent.infoHash })
-      logger.info(s"Submitted torrent ${torrent.infoHash} but it already exists.")
+      logger.info(s"Submitting torrent ${torrent.infoHash} but it already exists.")
     else if (!state.compareAndSet(currentState, currentState + (torrent.infoHash -> Submitted))) submit(torrent)
     else {
       logger.info(s"Submitted torrent ${torrent.infoHash}.")
@@ -72,7 +72,7 @@ private[tracker] final class TrackerImpl private (
       case (Some(state4Torrent), Success(inetSocket)) =>
         val socketAddressWithNoHostname = // we don't want association with a particular hostname
           new InetSocketAddress(InetAddress.getByAddress(inetSocket.getAddress.getAddress), inetSocket.getPort)
-        obtainPeers(infoHash, socketAddressWithNoHostname)(mainExecutor)
+        run(infoHash, socketAddressWithNoHostname)(mainExecutor)
 
       case (None, Failure(exception)) => logger.warn("Weird....", exception)
       case (None, Success(_)) => logger.warn("Weird....")
@@ -82,10 +82,8 @@ private[tracker] final class TrackerImpl private (
   private def sendConnectDownTheWire(txnId: Int, tracker: InetSocketAddress): Unit = {
     val payload = ConnectRequest(txnId).serialize
     Try(socket.send(new DatagramPacket(payload, payload.length, tracker))) match {
-      case Failure(exception) =>
-        logger.warn(s"Sending Connect to '${tracker.getAddress}' with transaction id '$txnId'.", exception)
-      case Success(_) =>
-        logger.info(s"Sent Connect to '$tracker' with transaction id '$txnId'.")
+      case Failure(err) => logger.warn(s"Sending Connect to '${tracker.getAddress}' with transaction id '$txnId'.", err)
+      case Success(_) => logger.info(s"Sent Connect to '$tracker' with transaction id '$txnId'.")
     }
   }
 
@@ -114,38 +112,26 @@ private[tracker] final class TrackerImpl private (
     }
   }
 
-  private def obtainPeers(infoHash: InfoHash, tracker: InetSocketAddress)(implicit ec: ExecutionContext): Unit =
+  private def run(infoHash: InfoHash, tracker: InetSocketAddress)(implicit ec: ExecutionContext): Unit =
     (for {
       (connectRes, timestampConn) <- connect(infoHash, tracker)
-      announceRes <- announce(infoHash, tracker, connectRes, timestampConn)
-    } yield announceRes) onComplete {
-      case Success(announceRes) => setNewPeers(infoHash, tracker, announceRes)
+      connection = Connection(connectRes.connectionId, timestampConn)
+      announceRes <- announce(infoHash, tracker, connection)
+      _ <- setAndReannounce(infoHash, tracker, announceRes.peers.toSet, connection)
+    } yield ()) onComplete {
+      case Success(_) => logger.warn(s"Finished for $infoHash and $tracker")
       case Failure(timeout: TimeoutException) =>
         logger.warn(s"Obtaining peers from '$tracker' from '$infoHash'. Retrying ...", timeout)
-        obtainPeers(infoHash, tracker)
+        run(infoHash, tracker)
       case Failure(otherError) => logger.warn(s"Obtaining peers from '$tracker' from '$infoHash'.", otherError)
     }
-
-  @tailrec
-  private def setNewPeers(infoHash: InfoHash, tracker: InetSocketAddress, announceResponse: AnnounceResponse): Unit = {
-    val currentState = state.get()
-    val AnnounceResponse(_, _, _, leech, seeds, peers) = announceResponse
-    currentState.get(infoHash) match {
-      case Some(Submitted) => logger.warn("Foobar")
-      case Some(tiers @ Tiers(_, _)) =>
-        val newState = currentState + (infoHash -> tiers.updateEntry(tracker, AnnounceReceived(leech, seeds, peers)))
-        if (!state.compareAndSet(currentState, newState)) setNewPeers(infoHash, tracker, announceResponse)
-        else logger.info(s"Added ${peers.size} for $infoHash from $tracker.")
-      case None => logger.warn("foo Bar")
-    }
-  }
 
   private def connect(infoHash: InfoHash, tracker: InetSocketAddress): Future[(ConnectResponse, Long)] = {
     def inner(n: Int): Future[(ConnectResponse, Long)] = {
       val currentState = state.get()
-      val txdId = txnIdGen.txnId()
       currentState.get(infoHash) match {
         case Some(state4Torrent) =>
+          val txdId = txnIdGen.txnId()
           val promise = Promise[(ConnectResponse, Long)]()
           val newState4Torrent = state4Torrent.newTrackerSent(tracker, ConnectSent(txdId, promise))
           val newState = currentState + (infoHash -> newState4Torrent)
@@ -156,8 +142,7 @@ private[tracker] final class TrackerImpl private (
               case _: TimeoutException => inner(n + 1) // todo: stackoverflow risk
             }(mainExecutor)
           }
-        case None =>
-          Future.failed(new IllegalStateException(s"Connecting to $tracker but torrent $infoHash doesn't exist."))
+        case None => Future.failed(new IllegalStateException(s"Connecting to $tracker but '$infoHash' doesn't exist."))
       }
     }
     inner(0)
@@ -166,38 +151,63 @@ private[tracker] final class TrackerImpl private (
   private def announce(
       infoHash: InfoHash,
       tracker: InetSocketAddress,
-      conResponse: ConnectResponse,
-      timestamp: Long
+      connection: Connection
   ): Future[AnnounceResponse] = {
     def inner(n: Int): Future[AnnounceResponse] = {
       val currentState = state.get()
       currentState.get(infoHash) match {
-        case Some(Submitted) =>
-          Future.failed(new IllegalStateException(s"Announcing to $tracker for $infoHash, but no such torrent."))
-        case Some(tiers @ Tiers(_, _)) =>
+        case Some(tiers @ Tiers(_, _, _)) =>
           val txdId = txnIdGen.txnId()
           val promise = Promise[AnnounceResponse]()
-          val announce = AnnounceSent(txdId, conResponse.connectionId, promise)
+          val announce = AnnounceSent(txdId, connection.id, promise)
           val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
           if (!state.compareAndSet(currentState, newState)) inner(n)
           else {
-            sendAnnounceDownTheWire(infoHash, conResponse.connectionId, txdId, tracker)
+            sendAnnounceDownTheWire(infoHash, connection.id, txdId, tracker)
             timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith {
               case _: TimeoutException =>
-                if (limitConnectionId(timestamp))
+                if (limitConnectionId(connection.timestamp))
                   Future.failed(
                     new TimeoutException(
-                      s"Connection to $tracker (${connAgeSec(timestamp)} s) expired before announce received."
+                      s"Connection to $tracker (${connAgeSec(connection.timestamp)} s) expired before announce received."
                     )
                   )
                 else inner(n + 1)
             }(mainExecutor)
           }
-        case None =>
-          Future.failed(new IllegalStateException(s"Announcing to $tracker for $infoHash, but no such torrent."))
+        case _ => Future.failed(new IllegalStateException(s"Announcing to $tracker for $infoHash but no such torrent."))
       }
     }
     inner(0)
+  }
+
+  private def setAndReannounce(
+      infoHash: InfoHash,
+      tracker: InetSocketAddress,
+      peers: Set[InetSocketAddress],
+      connection: Connection
+  )(implicit ec: ExecutionContext): Future[Unit] = {
+    val currentState = state.get()
+    currentState.get(infoHash) match {
+      case Some(tiers @ Tiers(_, _, _)) =>
+        val newEntry4Tracker = tiers.updateEntry(tracker, AnnounceReceived(connection.timestamp, peers.size))
+        val newState =
+          currentState + (infoHash -> newEntry4Tracker.copy(peers = newEntry4Tracker.peers ++ peers))
+        if (!state.compareAndSet(currentState, newState)) setAndReannounce(infoHash, tracker, peers, connection)
+        else
+          for {
+            _ <- after(Success(()), config.announceTimeInterval)
+            _ <-
+              if (limitConnectionId(connection.timestamp))
+                failed(new TimeoutException(s"Connection to $tracker (${connAgeSec(connection.timestamp)} s) expired."))
+              else Future.unit
+            _ = logger.info(s"Re-announcing to $tracker for $infoHash. Previous peers obtained: ${peers.size}")
+            announceRes <- announce(infoHash, tracker, connection)
+            _ <- setAndReannounce(infoHash, tracker, announceRes.peers.toSet, connection)
+          } yield ()
+      case _ =>
+        Future.failed(new IllegalStateException(s"Re-announcing to $tracker for $infoHash but no such torrent."))
+    }
   }
 
   private def timeout[A](fut: Future[A], timeout: FiniteDuration): Future[A] = {
@@ -211,30 +221,33 @@ private[tracker] final class TrackerImpl private (
     promise.future
   }
 
-  override def peers(infoHash: InfoHash): List[InetSocketAddress] =
+  private def after[A](futValue: Try[A], delay: FiniteDuration): Future[A] = {
+    val promise = Promise[A]()
+    scheduler.schedule(
+      new Runnable { override def run(): Unit = promise.tryComplete(futValue) },
+      delay.toMillis,
+      TimeUnit.MILLISECONDS
+    )
+    promise.future
+  }
+
+  override def peers(infoHash: InfoHash): Set[InetSocketAddress] =
     state.get().get(infoHash) match {
-      case Some(Submitted) => List.empty
-      case Some(Tiers(underlying, _)) =>
-        underlying.flatMap {
-          case (_, AnnounceReceived(_, _, peers)) => peers
-          case _ => Nil
-        }.toList
-      case _ => List.empty
+      case Some(Tiers(peers, _, _)) => peers
+      case _ => Set.empty
     }
 
   def statistics(trackerState: State): Tracker.Statistics =
     trackerState match {
       case Submitted => Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0), Map.empty)
-      case Tiers(underlying, _) =>
+      case Tiers(allPeers, underlying, _) =>
         underlying
-          .foldLeft[(Set[InetSocketAddress], Tracker.Statistics)]((Set.empty, TrackerImpl.emptyStatistics)) {
-            case ((acc, stats: Tracker.Statistics), (tracker, _: ConnectSent)) => (acc, stats.addConnectSent(tracker))
-            case ((acc, stats: Tracker.Statistics), (tracker, _: AnnounceSent)) => (acc, stats.addAnnounceSent(tracker))
-            case ((acc, stats: Tracker.Statistics), (tracker, AnnounceReceived(_, _, peers))) =>
-              val distinct = acc ++ peers.toSet
-              (distinct, stats.addAnnounceReceived(tracker, peers.size, distinct.size))
+          .foldLeft[Tracker.Statistics](TrackerImpl.emptyStatistics) {
+            case (stats, (tracker, _: ConnectSent)) => stats.addConnectSent(tracker)
+            case (stats, (tracker, _: AnnounceSent)) => stats.addAnnounceSent(tracker)
+            case (stats, (tracker, AnnounceReceived(_, numPeers))) => stats.addAnnounceReceived(tracker, numPeers)
           }
-          ._2
+          .setNumberPeers(allPeers.size)
     }
 
   override def statistics: Map[InfoHash, Tracker.Statistics] =
@@ -244,8 +257,10 @@ private[tracker] final class TrackerImpl private (
 
 object TrackerImpl {
 
+  private case class Connection(id: Long, timestamp: Long)
+
   private val emptyStatistics = Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0), Map.empty)
-  case class Config(port: Int, peerId: PeerId, key: Int)
+  case class Config(port: Int, peerId: PeerId, key: Int, announceTimeInterval: FiniteDuration)
 
   private val retries: Int => Int = n => (15 * math.pow(2, n)).toInt
 
