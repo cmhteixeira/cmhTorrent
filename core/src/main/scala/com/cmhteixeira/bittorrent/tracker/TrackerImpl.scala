@@ -116,10 +116,10 @@ private[tracker] final class TrackerImpl private (
 
   private def obtainPeers(infoHash: InfoHash, tracker: InetSocketAddress)(implicit ec: ExecutionContext): Unit =
     (for {
-      (connectResponse, timestampConn) <- sendConnect(infoHash, tracker, 0)
-      announceResponse <- sendAnnounce(infoHash, tracker, connectResponse, timestampConn, 0)
-    } yield announceResponse) onComplete {
-      case Success(announceResponse) => setNewPeers(infoHash, tracker, announceResponse)
+      (connectRes, timestampConn) <- connect(infoHash, tracker)
+      announceRes <- announce(infoHash, tracker, connectRes, timestampConn)
+    } yield announceRes) onComplete {
+      case Success(announceRes) => setNewPeers(infoHash, tracker, announceRes)
       case Failure(timeout: TimeoutException) =>
         logger.warn(s"Obtaining peers from '$tracker' from '$infoHash'. Retrying ...", timeout)
         obtainPeers(infoHash, tracker)
@@ -140,54 +140,64 @@ private[tracker] final class TrackerImpl private (
     }
   }
 
-  private def sendConnect(infoHash: InfoHash, tracker: InetSocketAddress, n: Int): Future[(ConnectResponse, Long)] = {
-    val currentState = state.get()
-    val txdId = txnIdGen.txnId()
-    currentState.get(infoHash) match {
-      case Some(state4Torrent) =>
-        val promise = Promise[(ConnectResponse, Long)]()
-        val newState4Torrent = state4Torrent.newTrackerSent(tracker, ConnectSent(txdId, promise))
-        val newState = currentState + (infoHash -> newState4Torrent)
-        if (!state.compareAndSet(currentState, newState)) sendConnect(infoHash, tracker, n)
-        else {
-          sendConnectDownTheWire(txdId, tracker)
-          timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith { case _: TimeoutException =>
-            sendConnect(infoHash, tracker, n + 1) // todo: stackoverflow risk
-          }(mainExecutor)
-        }
-
-      case None => Future.failed(new IllegalStateException("Bla bla bla"))
+  private def connect(infoHash: InfoHash, tracker: InetSocketAddress): Future[(ConnectResponse, Long)] = {
+    def inner(n: Int): Future[(ConnectResponse, Long)] = {
+      val currentState = state.get()
+      val txdId = txnIdGen.txnId()
+      currentState.get(infoHash) match {
+        case Some(state4Torrent) =>
+          val promise = Promise[(ConnectResponse, Long)]()
+          val newState4Torrent = state4Torrent.newTrackerSent(tracker, ConnectSent(txdId, promise))
+          val newState = currentState + (infoHash -> newState4Torrent)
+          if (!state.compareAndSet(currentState, newState)) inner(n)
+          else {
+            sendConnectDownTheWire(txdId, tracker)
+            timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith {
+              case _: TimeoutException => inner(n + 1) // todo: stackoverflow risk
+            }(mainExecutor)
+          }
+        case None =>
+          Future.failed(new IllegalStateException(s"Connecting to $tracker but torrent $infoHash doesn't exist."))
+      }
     }
+    inner(0)
   }
 
-  private def sendAnnounce(
+  private def announce(
       infoHash: InfoHash,
       tracker: InetSocketAddress,
-      connectResponse: ConnectResponse,
-      timestamp: Long,
-      n: Int
+      conResponse: ConnectResponse,
+      timestamp: Long
   ): Future[AnnounceResponse] = {
-    val currentState = state.get()
-    currentState.get(infoHash) match {
-      case Some(Submitted) => Future.failed(new IllegalStateException("kaboom!!!"))
-      case Some(tiers @ Tiers(_, _)) =>
-        val txdId = txnIdGen.txnId()
-        val promise = Promise[AnnounceResponse]()
-        val announce = AnnounceSent(txdId, connectResponse.connectionId, promise, n)
-        val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
-        if (!state.compareAndSet(currentState, newState)) sendAnnounce(infoHash, tracker, connectResponse, timestamp, n)
-        else {
-          sendAnnounceDownTheWire(infoHash, connectResponse.connectionId, txdId, tracker)
-          timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith { case _: TimeoutException =>
-            if (limitConnectionId(timestamp))
-              Future.failed(
-                new TimeoutException(s"No Announce received and connection time expired: ${connAgeSec(timestamp)}")
-              )
-            else sendAnnounce(infoHash, tracker, connectResponse, timestamp, n)
-          }(mainExecutor)
-        }
-      case None => Future.failed(new IllegalStateException("kaboom!!!"))
+    def inner(n: Int): Future[AnnounceResponse] = {
+      val currentState = state.get()
+      currentState.get(infoHash) match {
+        case Some(Submitted) =>
+          Future.failed(new IllegalStateException(s"Announcing to $tracker for $infoHash, but no such torrent."))
+        case Some(tiers @ Tiers(_, _)) =>
+          val txdId = txnIdGen.txnId()
+          val promise = Promise[AnnounceResponse]()
+          val announce = AnnounceSent(txdId, conResponse.connectionId, promise)
+          val newState = currentState + (infoHash -> tiers.updateEntry(tracker, announce))
+          if (!state.compareAndSet(currentState, newState)) inner(n)
+          else {
+            sendAnnounceDownTheWire(infoHash, conResponse.connectionId, txdId, tracker)
+            timeout(promise.future, TrackerImpl.retries(math.min(8, n)).seconds).recoverWith {
+              case _: TimeoutException =>
+                if (limitConnectionId(timestamp))
+                  Future.failed(
+                    new TimeoutException(
+                      s"Connection to $tracker (${connAgeSec(timestamp)} s) expired before announce received."
+                    )
+                  )
+                else inner(n + 1)
+            }(mainExecutor)
+          }
+        case None =>
+          Future.failed(new IllegalStateException(s"Announcing to $tracker for $infoHash, but no such torrent."))
+      }
     }
+    inner(0)
   }
 
   private def timeout[A](fut: Future[A], timeout: FiniteDuration): Future[A] = {

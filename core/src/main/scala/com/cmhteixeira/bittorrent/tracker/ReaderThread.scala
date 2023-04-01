@@ -33,29 +33,28 @@ private[tracker] class ReaderThread private (
 
   private def processPacket(dg: DatagramPacket): Unit = {
     val payloadSize = dg.getLength
+    val origin = dg.getSocketAddress.asInstanceOf[InetSocketAddress]
     if (payloadSize == 16) // could be ConnectResponse
       ConnectResponse.deserialize(dg.getData) match {
-        case Left(error) =>
-          logger.warn(
-            s"Received packet from '${dg.getSocketAddress}' with 16 bytes, but not possible to deserialize into an Connect response: '$error'."
-          )
+        case Left(e) =>
+          logger.warn(s"Received 16 bytes packet from '$origin' but deserialization to connect response failed: '$e'.")
         case Right(connectResponse) =>
-          logger.info(s"Received potential Connect response from '${dg.getSocketAddress}'.")
-          processConnect(dg.getSocketAddress.asInstanceOf[InetSocketAddress], connectResponse, System.nanoTime())
+          logger.info(s"Received potential Connect response from '$origin'.")
+          processConnect(origin, connectResponse, System.nanoTime())
       }
     else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) // could be an AnnounceResponse
       AnnounceResponse.deserialize(dg.getData, payloadSize) match {
-        case Left(value) =>
+        case Left(e) =>
           logger.warn(
-            s"Received packet from '${dg.getSocketAddress}' with $payloadSize bytes, but couldn't be deserialized into an Announce response: '$value'."
+            s"Received $payloadSize bytes packet from '$origin' but deserialization to announce response failed: '$e'."
           )
         case Right(announceResponse) =>
-          logger.info(s"Received potential Announce response from '${dg.getSocketAddress}' with $payloadSize bytes.")
-          processAnnounce(dg.getSocketAddress.asInstanceOf[InetSocketAddress], announceResponse)
+          logger.info(s"Received potential Announce response from '$origin' with $payloadSize bytes.")
+          processAnnounce(origin, announceResponse)
       }
     else
       logger.warn(
-        s"Received packet with $payloadSize bytes from '${dg.getSocketAddress}'. It does not fit the expectations of either a 'ConnectResponse' nor a 'AnnounceResponse'."
+        s"Received $payloadSize bytes packet from '$origin'. Does not conform to 'ConnectResponse' or 'AnnounceResponse'."
       )
   }
 
@@ -91,10 +90,10 @@ private[tracker] class ReaderThread private (
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
-      case (infoHash, tiers, AnnounceSent(txnId, _, channel, _)) :: Nil if txnId == announceResponse.transactionId =>
+      case (infoHash, tiers, AnnounceSent(txnId, _, channel)) :: Nil if txnId == announceResponse.transactionId =>
         logger.info(s"Announce response from '$origin' for '$infoHash' with txnId '$txnId': ${peers.size} peers.")
         channel.trySuccess(announceResponse)
-      case (infoHash, tiers, AnnounceSent(txnId, _, channel, _)) :: Nil => logger.warn("Bla blabla")
+      case (infoHash, tiers, AnnounceSent(txnId, _, channel)) :: Nil => logger.warn("Bla blabla")
     }
   }
 }

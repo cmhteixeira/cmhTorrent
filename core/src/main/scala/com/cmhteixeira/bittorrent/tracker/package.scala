@@ -43,7 +43,7 @@ package object tracker {
         announceResponse: AnnounceResponse
     ): Option[AnnounceSent] =
       toList.collectFirst {
-        case (thisTrackerSocket, announceSent @ AnnounceSent(txnId, _, _, _))
+        case (thisTrackerSocket, announceSent @ AnnounceSent(txnId, _, _))
             if thisTrackerSocket == trackerSocket && txnId == announceResponse.transactionId =>
           announceSent
       }
@@ -56,8 +56,7 @@ package object tracker {
   private[tracker] case class AnnounceSent(
       txnId: Int,
       connectionId: Long,
-      channel: Promise[AnnounceResponse],
-      n: Int
+      channel: Promise[AnnounceResponse]
   ) extends TrackerState
 
   private[tracker] case class AnnounceReceived(leechers: Int, seeders: Int, peers: List[InetSocketAddress])
