@@ -62,7 +62,7 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
     currentState.toList.flatMap {
-      case (hash, Tiers(_, underlying, _)) =>
+      case (hash, Tiers(_, underlying)) =>
         underlying.get(origin) match {
           case Some(conSent @ ConnectSent(txnId, _)) if txnId == connectResponse.transactionId => List(hash -> conSent)
           case _ => List.empty
@@ -84,7 +84,7 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val AnnounceResponse(_, _, _, _, _, peers) = announceResponse
     currentState.flatMap {
-      case (infoHash, tiers @ Tiers(_, _, _)) =>
+      case (infoHash, tiers @ Tiers(_, _)) =>
         tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
       case (_, Submitted) => List.empty
     }.toList match {
