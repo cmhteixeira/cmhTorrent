@@ -5,26 +5,17 @@ import scala.concurrent.Promise
 
 package object tracker {
 
-  private[tracker] sealed trait State {
+  private[tracker] case class State(peers: Set[InetSocketAddress], trackers: Map[InetSocketAddress, TrackerState]) {
 
-    def newTrackerSent(socket: InetSocketAddress, connectSent: ConnectSent): Tiers[TrackerState] =
-      this match {
-        case Submitted => Tiers(Set.empty, Map(socket -> connectSent))
-        case tiers @ Tiers(_, resolved) => tiers.copy(underlying = resolved + (socket -> connectSent))
-      }
-  }
+    def newTrackerSent(socket: InetSocketAddress, connectSent: ConnectSent): State =
+      State(peers, trackers = trackers + (socket -> connectSent))
 
-  private[tracker] case object Submitted extends State
+    def toList: List[(InetSocketAddress, TrackerState)] = trackers.map { case (address, state) =>
+      address -> state
+    }.toList
 
-  private[tracker] case class Tiers[+A <: TrackerState](
-      peers: Set[InetSocketAddress],
-      underlying: Map[InetSocketAddress, A]
-  ) extends State {
-
-    def toList: List[(InetSocketAddress, A)] = underlying.map { case (address, state) => address -> state }.toList
-
-    def updateEntry(tracker: InetSocketAddress, newState: TrackerState): Tiers[TrackerState] =
-      copy(underlying = underlying.map {
+    def updateEntry(tracker: InetSocketAddress, newState: TrackerState): State =
+      copy(trackers = trackers.map {
         case (trackerSocket, _) if trackerSocket == tracker => (trackerSocket, newState)
         case pair => pair
       })
@@ -38,6 +29,10 @@ package object tracker {
             if thisTrackerSocket == trackerSocket && txnId == announceResponse.transactionId =>
           announceSent
       }
+  }
+
+  private[tracker] object State {
+    val empty: State = State(Set.empty, Map.empty)
   }
 
   private[tracker] sealed trait TrackerState

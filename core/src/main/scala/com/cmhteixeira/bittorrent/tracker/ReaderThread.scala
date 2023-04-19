@@ -61,13 +61,11 @@ private[tracker] class ReaderThread private (
   private def processConnect(origin: InetSocketAddress, connectResponse: ConnectResponse, timestamp: Long): Unit = {
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
-    currentState.toList.flatMap {
-      case (hash, Tiers(_, underlying)) =>
-        underlying.get(origin) match {
-          case Some(conSent @ ConnectSent(txnId, _)) if txnId == connectResponse.transactionId => List(hash -> conSent)
-          case _ => List.empty
-        }
-      case _ => List.empty
+    currentState.toList.flatMap { case (hash, State(_, underlying)) =>
+      underlying.get(origin) match {
+        case Some(conSent @ ConnectSent(txnId, _)) if txnId == connectResponse.transactionId => List(hash -> conSent)
+        case _ => List.empty
+      }
     } match {
       case Nil => logger.warn(s"Received possible Connect response from '$origin', but no state across all torrents.")
       case (infoHash, ConnectSent(_, channel)) :: Nil =>
@@ -83,10 +81,8 @@ private[tracker] class ReaderThread private (
   private def processAnnounce(origin: InetSocketAddress, announceResponse: AnnounceResponse): Unit = {
     val currentState = state.get()
     val AnnounceResponse(_, _, _, _, _, peers) = announceResponse
-    currentState.flatMap {
-      case (infoHash, tiers @ Tiers(_, _)) =>
-        tiers.announceResponse(origin, announceResponse).map(a => (infoHash, tiers, a))
-      case (_, Submitted) => List.empty
+    currentState.flatMap { case (infoHash, state4Torrent) =>
+      state4Torrent.announceResponse(origin, announceResponse).map(a => (infoHash, state4Torrent, a))
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
