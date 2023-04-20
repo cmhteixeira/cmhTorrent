@@ -262,7 +262,8 @@ object TrackerImpl {
   ): TrackerImpl = {
     val socket = new DatagramSocket(config.port)
     val sharedState = new AtomicReference[Map[InfoHash, State]](Map.empty)
-    mainExecutor.execute(ReaderThread(socket, sharedState))
+    val thread = new Thread(ReaderThread(socket, sharedState), "tracker-udp-socket-reads")
+    thread.start()
 
     new TrackerImpl(
       socket = socket,
