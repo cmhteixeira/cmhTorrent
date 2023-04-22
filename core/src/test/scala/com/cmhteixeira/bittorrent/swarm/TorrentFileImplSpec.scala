@@ -1,13 +1,14 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import org.scalatest.{FunSuite, Matchers}
 import scodec.bits.ByteVector
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers
 
 import java.nio.file.{Path, Paths}
 import java.util.UUID
 
-class TorrentFileImplSpec extends FunSuite with Matchers {
+class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   val temporaryFilesDir: Path = Paths.get(System.getProperty("java.io.tmpdir"))
   def randomTempFile(): Path = temporaryFilesDir.resolve(UUID.randomUUID().toString)
 

@@ -2,9 +2,9 @@ package com.cmhteixeira.bittorrent.peerprotocol
 
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Handshake.protocol
-import sun.nio.cs.{US_ASCII, UTF_8}
 
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 private[peerprotocol] object PeerMessages {
 
@@ -13,10 +13,10 @@ private[peerprotocol] object PeerMessages {
     def serialize: Array[Byte] = {
       val handShake = ByteBuffer.allocate(68)
       handShake.put(19: Byte)
-      handShake.put(protocol.getBytes(new US_ASCII()))
+      handShake.put(protocol.getBytes(StandardCharsets.US_ASCII))
       handShake.putLong(0)
       handShake.put(infoHash.bytes)
-      handShake.put(peerId.underlying.getBytes(new UTF_8()))
+      handShake.put(peerId.underlying.getBytes(StandardCharsets.UTF_8))
       handShake.array()
     }
   }

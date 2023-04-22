@@ -1,20 +1,18 @@
 package com.cmhteixeira.bencode
 
 import cats.Show
-import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary}
+import com.cmhteixeira.bencode.Bencode.BDictionary
 import io.circe
-import io.circe.Decoder.Result
-import io.circe.{HCursor, Json}
-import sun.nio.cs.UTF_8
+import io.circe.Json
 
-import java.nio.charset.Charset
+import java.nio.charset.{Charset, StandardCharsets}
 
 sealed trait Bencode {
   def as[A](implicit ev: Decoder[A]): Either[DecodingFailure, A] = ev(this)
 
   def asString(charset: Charset): Option[String]
 
-  final def asString: Option[String] = asString(new UTF_8())
+  final def asString: Option[String] = asString(StandardCharsets.UTF_8)
 
   def asNumber: Option[Bencode.BInteger]
 
@@ -57,7 +55,7 @@ object Bencode {
       None
 
     override def toPrettyString(tab: String): String =
-      s"${new String(underlying, new UTF_8())}"
+      s"${new String(underlying, StandardCharsets.UTF_8)}"
   }
 
   case class BList(underlying: List[Bencode]) extends Bencode {
@@ -96,7 +94,7 @@ object Bencode {
 
   case class BDictionary(underlying: Map[BByteString, Bencode]) extends Bencode {
 
-    def apply(key: String): Option[Bencode] = apply(key, new UTF_8())
+    def apply(key: String): Option[Bencode] = apply(key, StandardCharsets.UTF_8)
 
     def apply(key: String, charset: Charset): Option[Bencode] =
       underlying.find { case (string, _) => new String(string.underlying, charset) == key }.map(_._2)
@@ -125,7 +123,7 @@ object Bencode {
     }
   }
 
-  def fromString(value: String): BByteString = fromString(value, new UTF_8())
+  def fromString(value: String): BByteString = fromString(value, StandardCharsets.UTF_8)
   def fromString(value: String, charset: Charset): BByteString = BByteString(value.getBytes(charset))
 
   def fromLong(value: Long): BInteger = BInteger(value)
@@ -145,11 +143,11 @@ object Bencode {
     override def apply(a: Bencode): Json = //todo: optimize this
       a match {
         case BInteger(underlying) => Json.fromLong(underlying)
-        case BByteString(underlying) => Json.fromString(new String(underlying, new UTF_8()))
+        case BByteString(underlying) => Json.fromString(new String(underlying, StandardCharsets.UTF_8))
         case BList(underlying) => Json.fromValues(underlying.map(apply))
         case BDictionary(underlying) =>
           Json.fromFields(underlying.map {
-            case (BByteString(key), value) => (new String(key, new UTF_8()), apply(value))
+            case (BByteString(key), value) => (new String(key, StandardCharsets.UTF_8), apply(value))
           })
       }
   }

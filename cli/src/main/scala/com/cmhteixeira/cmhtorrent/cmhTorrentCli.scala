@@ -12,6 +12,7 @@ import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.global
 import scala.concurrent.duration.DurationInt
+import scala.language.postfixOps
 
 object cmhTorrentCli extends App {
   private val peerId = PeerId("cmh-4234567891011121").getOrElse(throw new IllegalArgumentException("Peer id is bad."))

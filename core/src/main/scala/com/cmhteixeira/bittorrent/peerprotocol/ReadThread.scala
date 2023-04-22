@@ -8,11 +8,11 @@ import com.cmhteixeira.bittorrent.peerprotocol.State._
 import org.apache.commons.codec.binary.Hex
 import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.ByteVector
-import sun.nio.cs.UTF_8
 
 import java.io.InputStream
 import java.net.{InetSocketAddress, Socket}
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
@@ -283,7 +283,7 @@ private[peerprotocol] class ReadThread private (
     } yield begin.handShaked(
       reservedBytes,
       Hex.encodeHexString(peerIdValid),
-      new String(protocolValidated, new UTF_8()),
+      new String(protocolValidated, StandardCharsets.UTF_8),
       pieces
     )) match {
       case Left(value) =>

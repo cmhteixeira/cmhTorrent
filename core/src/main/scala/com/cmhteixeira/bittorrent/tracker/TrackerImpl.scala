@@ -27,7 +27,7 @@ private[tracker] final class TrackerImpl private (
   private val logger = LoggerFactory.getLogger("TrackerImpl")
 
   @tailrec
-  def submit(torrent: Torrent): Unit = {
+  override def submit(torrent: Torrent): Unit = {
     val currentState = state.get()
     if (currentState.exists { case (hash, _) => hash == torrent.infoHash })
       logger.info(s"Submitting torrent ${torrent.infoHash} but it already exists.")
@@ -117,10 +117,10 @@ private[tracker] final class TrackerImpl private (
     def inner(n: Int): Future[(ConnectResponse, Long)] = {
       val currentState = state.get()
       currentState.get(infoHash) match {
-        case Some(state4Torrent) =>
+        case Some(State(peers, trackers)) =>
           val txdId = txnIdGen.txnId()
           val promise = Promise[(ConnectResponse, Long)]()
-          val newState4Torrent = state4Torrent.newTrackerSent(tracker, ConnectSent(txdId, promise))
+          val newState4Torrent = State(peers, trackers = trackers + (tracker -> ConnectSent(txdId, promise)))
           val newState = currentState + (infoHash -> newState4Torrent)
           if (!state.compareAndSet(currentState, newState)) inner(n)
           else {

@@ -2,9 +2,9 @@ package com.cmhteixeira
 
 import com.cmhteixeira.bencode.Bencode
 import org.apache.commons.codec.binary.Hex
-import sun.nio.cs.UTF_8
 
 import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util
 
@@ -15,7 +15,7 @@ package object bittorrent {
   object PeerId {
 
     def apply(underlying: String): Option[PeerId] =
-      if (underlying.getBytes(new UTF_8).length != 20) None
+      if (underlying.getBytes(StandardCharsets.UTF_8).length != 20) None
       else Some(new PeerId(underlying))
   }
 

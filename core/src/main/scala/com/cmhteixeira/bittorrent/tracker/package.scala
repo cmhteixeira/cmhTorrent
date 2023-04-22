@@ -7,9 +7,6 @@ package object tracker {
 
   private[tracker] case class State(peers: Set[InetSocketAddress], trackers: Map[InetSocketAddress, TrackerState]) {
 
-    def newTrackerSent(socket: InetSocketAddress, connectSent: ConnectSent): State =
-      State(peers, trackers = trackers + (socket -> connectSent))
-
     def toList: List[(InetSocketAddress, TrackerState)] = trackers.map { case (address, state) =>
       address -> state
     }.toList

@@ -2,8 +2,9 @@ package com.cmhteixeira.bittorrent.tracker
 
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
 import com.cmhteixeira.bittorrent.tracker.AnnounceRequest.{Announce, Event}
-import sun.nio.cs.UTF_8
+
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 private[tracker] case class AnnounceRequest(
     connectionId: Long,
@@ -29,7 +30,7 @@ private[tracker] case class AnnounceRequest(
     })
     bytes.putInt(transactionId)
     bytes.put(infoHash.bytes)
-    bytes.put(peerId.underlying.getBytes(new UTF_8))
+    bytes.put(peerId.underlying.getBytes(StandardCharsets.UTF_8))
     bytes.putLong(downloaded)
     bytes.putLong(left)
     bytes.putLong(uploaded)

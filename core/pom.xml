@@ -18,96 +18,74 @@
     </license>
   </licenses>
 
-  <properties>
-    <maven.compiler.source>1.8</maven.compiler.source>
-    <maven.compiler.target>1.8</maven.compiler.target>
-    <encoding>UTF-8</encoding>
-    <scala.version>2.12.6</scala.version>
-    <scala.compat.version>2.12</scala.compat.version>
-    <spec2.version>4.2.0</spec2.version>
-  </properties>
 
   <dependencies>
     <dependency>
       <groupId>org.scala-lang</groupId>
       <artifactId>scala-library</artifactId>
-      <version>${scala.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.dampcake</groupId>
-      <artifactId>bencode</artifactId>
-      <version>1.4</version>
     </dependency>
     <dependency>
       <groupId>io.circe</groupId>
-      <artifactId>circe-core_2.12</artifactId>
-      <version>0.14.1</version>
+      <artifactId>circe-core_${scala.compat.version}</artifactId>
     </dependency>
     <dependency>
       <groupId>io.circe</groupId>
-      <artifactId>circe-parser_2.12</artifactId>
-      <version>0.14.1</version>
+      <artifactId>circe-parser_${scala.compat.version}</artifactId>
     </dependency>
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
-      <version>1.1.0</version>
     </dependency>
     <dependency> <!--TODO: Only to print hex-string representation of sha-1 output. Consider another way-->
       <groupId>commons-codec</groupId>
       <artifactId>commons-codec</artifactId>
-      <version>1.15</version>
     </dependency>
     <dependency>
       <groupId>org.scodec</groupId>
-      <artifactId>scodec-bits_2.12</artifactId>
-      <version>1.1.22</version>
+      <artifactId>scodec-bits_${scala.compat.version}</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.typesafe.akka</groupId>
+      <artifactId>akka-actor_${scala.compat.version}</artifactId>
     </dependency>
 
     <!-- Test -->
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>4.12</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scala.compat.version}</artifactId>
-      <version>3.0.5</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
 
+
+
   <build>
-    <sourceDirectory>src/main/scala</sourceDirectory>
-    <testSourceDirectory>src/test/scala</testSourceDirectory>
+<!--    <sourceDirectory>src/main/scala</sourceDirectory>-->
+<!--    <testSourceDirectory>src/test/scala</testSourceDirectory>-->
     <plugins>
       <plugin>
         <!-- see http://davidb.github.com/scala-maven-plugin -->
         <groupId>net.alchim31.maven</groupId>
         <artifactId>scala-maven-plugin</artifactId>
-        <version>3.3.2</version>
+<!--        <version>3.3.2</version>-->
         <executions>
           <execution>
             <goals>
               <goal>compile</goal>
               <goal>testCompile</goal>
             </goals>
-            <configuration>
-              <args>
-<!--                <arg>-dependencyfile</arg>-->
-                <arg>-Ypartial-unification</arg>
-<!--                <arg>${project.build.directory}/.scala_dependencies</arg>-->
-              </args>
-            </configuration>
           </execution>
         </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>2.21.0</version>
+<!--        <version>2.21.0</version>-->
         <configuration>
           <!-- Tests will be run with scalatest-maven-plugin instead -->
           <skipTests>true</skipTests>
@@ -116,7 +94,7 @@
       <plugin>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest-maven-plugin</artifactId>
-        <version>2.0.0</version>
+<!--        <version>2.0.0</version>-->
 <!--        <configuration>-->
 <!--          <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>-->
 <!--          <junitxml>.</junitxml>-->
