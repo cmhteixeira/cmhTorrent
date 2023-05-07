@@ -9,7 +9,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
-
+import TrackerState._
 private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
     state: AtomicReference[Map[InfoHash, State]]

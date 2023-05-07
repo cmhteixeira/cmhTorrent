@@ -2,9 +2,8 @@ package com.cmhteixeira.bittorrent
 
 import java.net.InetSocketAddress
 import scala.concurrent.Promise
-
 package object tracker {
-
+  import TrackerState._
   private[tracker] case class State(peers: Set[InetSocketAddress], trackers: Map[InetSocketAddress, TrackerState]) {
 
     def toList: List[(InetSocketAddress, TrackerState)] = trackers.map { case (address, state) =>
@@ -34,11 +33,14 @@ package object tracker {
 
   private[tracker] sealed trait TrackerState
 
-  private[tracker] case class ConnectSent(txnId: Int, channel: Promise[(ConnectResponse, Long)]) extends TrackerState
+  private[tracker] object TrackerState {
+    private[tracker] case class ConnectSent(txnId: Int, channel: Promise[(ConnectResponse, Long)]) extends TrackerState
 
-  private[tracker] case class AnnounceSent(txnId: Int, connectionId: Long, channel: Promise[AnnounceResponse])
-      extends TrackerState
+    private[tracker] case class AnnounceSent(txnId: Int, connectionId: Long, channel: Promise[AnnounceResponse])
+        extends TrackerState
 
-  private[tracker] case class AnnounceReceived(timestamp: Long, numPeers: Int) extends TrackerState
+    private[tracker] case class AnnounceReceived(timestamp: Long, numPeers: Int) extends TrackerState
+
+  }
 
 }

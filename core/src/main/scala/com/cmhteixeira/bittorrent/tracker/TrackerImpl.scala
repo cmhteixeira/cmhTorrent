@@ -13,7 +13,7 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException, blocking}
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.Future.failed
-
+import TrackerState._
 // TODO Problems:
 // 1. If we have the same tracker being used for multiple torrents, we don't re-use connection.
 private[tracker] final class TrackerImpl private (
