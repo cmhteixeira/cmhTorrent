@@ -1,5 +1,6 @@
 package com.cmhteixeira.bittorrent2.tracker;
 
+import com.cmhteixeira.bittorrent.tracker.ConnectRequest;
 import com.cmhteixeira.bittorrent.tracker.ConnectResponse;
 import scala.NotImplementedError;
 
@@ -23,6 +24,9 @@ public class TrackerJavaImpl implements TrackerJava {
 
     @Override
     public void submit(String torrent, List<InetSocketAddress> trackers) {
+        ConnectRequest connReq = new ConnectRequest(2);
+        HexFormat hexFormmater = HexFormat.of();
+        System.out.println(hexFormmater.formatHex(connReq.serialize()));
     }
 
     private CompletableFuture<Void> run(String torrent, InetSocketAddress tracker) {

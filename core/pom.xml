@@ -68,23 +68,31 @@
 <!--    <sourceDirectory>src/main/scala</sourceDirectory>-->
 <!--    <testSourceDirectory>src/test/scala</testSourceDirectory>-->
     <plugins>
+
       <plugin>
         <!-- see http://davidb.github.com/scala-maven-plugin -->
         <groupId>net.alchim31.maven</groupId>
         <artifactId>scala-maven-plugin</artifactId>
-        <configuration>
-          <excludes>
-<!--              <exclude>**/*.java</exclude>-->
-          </excludes>
-        </configuration>
         <executions>
           <execution>
+            <phase>process-resources</phase>
             <goals>
               <goal>compile</goal>
-              <goal>testCompile</goal>
+              <!--              <goal>testCompile</goal>-->
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+<!--        <executions>-->
+<!--          <execution>-->
+<!--            <id>default-compile</id>-->
+<!--            <phase>none</phase>-->
+<!--          </execution>-->
+<!--        </executions>-->
+
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

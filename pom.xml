@@ -46,13 +46,6 @@
           <groupId>org.scalatest</groupId>
           <artifactId>scalatest-maven-plugin</artifactId>
           <version>2.0.0</version>
-          <!--        <configuration>-->
-          <!--          <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>-->
-          <!--          <junitxml>.</junitxml>-->
-          <!--          <filereports>TestSuiteReport.txt</filereports>-->
-          <!-- Comma separated list of /JUnit test class names to execute -->
-          <!--          <jUnitClasses>samples.AppTest</jUnitClasses>-->
-          <!--        </configuration>-->
           <executions>
             <execution>
               <id>test</id>
@@ -76,14 +69,9 @@
         <plugin>
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.8.0</version>
-<!--          <executions>-->
-<!--            <execution>-->
-<!--              <phase>compile</phase>-->
-<!--              <goals>-->
-<!--                <goal>compile</goal>-->
-<!--              </goals>-->
-<!--            </execution>-->
-<!--          </executions>-->
+          <configuration>
+<!--            <skip>true</skip>-->
+          </configuration>
         </plugin>
         <plugin>
           <artifactId>maven-surefire-plugin</artifactId>
