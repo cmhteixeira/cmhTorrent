@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory
 
 import java.net.{DatagramPacket, DatagramSocket, InetAddress, InetSocketAddress}
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException, blocking}
@@ -85,7 +85,7 @@ private[tracker] final class TrackerImpl private (
       downloaded = 0,
       left = 0,
       uploaded = 0,
-      event = AnnounceRequest.Event.Started, // parametrized this
+      event = AnnounceRequest.Started, // parametrized this
       ipAddress = 0,
       key = config.key,
       numWanted = -1,

@@ -35,10 +35,10 @@ private[tracker] case class AnnounceRequest(
     bytes.putLong(left)
     bytes.putLong(uploaded)
     bytes.putInt(event match {
-      case Event.None => 0
-      case Event.Completed => 1
-      case Event.Started => 2
-      case Event.Stop => 3
+      case AnnounceRequest.None => 0
+      case AnnounceRequest.Completed => 1
+      case AnnounceRequest.Started => 2
+      case AnnounceRequest.Stop => 3
     })
     bytes.putInt(ipAddress)
     bytes.putInt(key)
@@ -49,14 +49,12 @@ private[tracker] case class AnnounceRequest(
   }
 }
 
-private[tracker] object AnnounceRequest {
+object AnnounceRequest {
   case object Announce
   sealed trait Event
 
-  object Event {
-    case object None extends Event
-    case object Completed extends Event
-    case object Started extends Event
-    case object Stop extends Event
-  }
+  case object None extends Event
+  case object Completed extends Event
+  case object Started extends Event
+  case object Stop extends Event
 }

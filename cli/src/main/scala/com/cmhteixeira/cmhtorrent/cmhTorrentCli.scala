@@ -47,7 +47,11 @@ object cmhTorrentCli extends App {
 //    TrackerImpl.Config(port = 8083, peerId = peerId, key = 123, 5 second)
 //  )
 
-  private val tracker2 = TrackerImplWithJava(8083)
+  private val tracker2 = TrackerImplWithJava(
+    8083,
+    Executors.newScheduledThreadPool(100),
+    RandomTransactionIdGenerator(SecureRandom.getInstanceStrong)
+  )
 
   private val swarmFactory =
     SwarmFactoryImpl(

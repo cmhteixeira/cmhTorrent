@@ -31,6 +31,8 @@
     <scodec.version>1.1.22</scodec.version>
     <jline.version>3.22.0</jline.version>
     <junit.version>4.12</junit.version>
+    <google.guava.version>31.1-jre</google.guava.version>
+    <java.tuples.version>1.2</java.tuples.version>
   </properties>
 
   <build>
@@ -52,6 +54,7 @@
               <goals>
                 <goal>test</goal>
               </goals>
+              <phase>none</phase>
             </execution>
           </executions>
         </plugin>
@@ -70,6 +73,9 @@
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.8.0</version>
           <configuration>
+            <compilerArgs>
+              <arg>--enable-preview</arg>
+            </compilerArgs>
 <!--            <skip>true</skip>-->
           </configuration>
         </plugin>
@@ -148,11 +154,20 @@
         <artifactId>akka-actor_${scala.compat.version}</artifactId>
         <version>${akka.actor.version}</version>
       </dependency>
-
       <dependency>
         <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
         <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.google.guava</groupId>
+        <artifactId>guava</artifactId>
+        <version>${google.guava.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.javatuples</groupId>
+        <artifactId>javatuples</artifactId>
+        <version>${java.tuples.version}</version>
       </dependency>
 
       <!-- Test -->

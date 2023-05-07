@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util
 
-package object bittorrent {
+package bittorrent {
 
   case class PeerId(underlying: String)
 
@@ -57,12 +57,14 @@ package object bittorrent {
     */
   case class UdpSocket(hostName: String, port: Int)
 
-  private[bittorrent] def parseToUdpSocketAddress(a: String): Either[String, UdpSocket] = {
-    val url = new URI(a)
-    (url.getScheme, url.getHost, url.getPort, url.getPath) match {
-      case (_, host, port, _) if port > 0 & port <= Char.MaxValue => Right(UdpSocket(host, port))
-      case (_, host, port, _) => Left(s"Port is '$port'. Host is $host.")
-      case _ => Left("Some other error.")
+  object UdpSocket {
+    def parseToUdpSocketAddress(a: String): Either[String, UdpSocket] = {
+      val url = new URI(a)
+      (url.getScheme, url.getHost, url.getPort, url.getPath) match {
+        case (_, host, port, _) if port > 0 & port <= Char.MaxValue => Right(UdpSocket(host, port))
+        case (_, host, port, _) => Left(s"Port is '$port'. Host is $host.")
+        case _ => Left("Some other error.")
+      }
     }
   }
 }

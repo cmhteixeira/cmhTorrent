@@ -106,6 +106,7 @@
               <id>cmhTorrent</id>
             </program>
           </programs>
+          <extraJvmArguments>--enable-preview</extraJvmArguments>
         </configuration>
       </plugin>
     </plugins>

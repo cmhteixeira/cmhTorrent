@@ -1,9 +1,9 @@
 package com.cmhteixeira.bittorrent2.tracker;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import java.net.InetSocketAddress;
-import java.util.HashMap;
-import java.util.Set;
 
-public record State(Set<InetSocketAddress> peers, HashMap<InetSocketAddress, TrackerState> trackers) {
+public record State(ImmutableSet<InetSocketAddress> peers, ImmutableMap<InetSocketAddress, TrackerState> trackers) {
 }
 
