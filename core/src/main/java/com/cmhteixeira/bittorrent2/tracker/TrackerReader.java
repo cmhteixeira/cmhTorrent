@@ -6,11 +6,10 @@ import java.net.DatagramSocket;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class TrackerReader implements Runnable {
-    DatagramSocket udpSocket;
-    AtomicReference<Map<String, State>> theSharedState;
-
-    int packetSize = 65507;
+final class TrackerReader implements Runnable {
+    final DatagramSocket udpSocket;
+    final AtomicReference<Map<String, State>> theSharedState;
+    final int packetSize = 65507;
 
     public TrackerReader(DatagramSocket udpSocket, AtomicReference<java.util.Map<String, State>> sharedState) {
         this.udpSocket = udpSocket;
