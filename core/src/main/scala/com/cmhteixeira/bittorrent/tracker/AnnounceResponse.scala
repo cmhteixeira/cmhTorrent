@@ -1,8 +1,11 @@
 package com.cmhteixeira.bittorrent.tracker
 
 import cats.Show
+import com.google.common.collect.ImmutableSet
+
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.ByteBuffer
+import scala.jdk.CollectionConverters.SetHasAsJava
 
 private[tracker] case class AnnounceResponse(
     action: Int,
@@ -11,7 +14,9 @@ private[tracker] case class AnnounceResponse(
     leechers: Int,
     seeders: Int,
     peers: List[InetSocketAddress]
-)
+) {
+  def peersJava: ImmutableSet[InetSocketAddress] = ImmutableSet.builder().addAll(peers.toSet.asJava).build()
+}
 
 private[tracker] object AnnounceResponse {
 

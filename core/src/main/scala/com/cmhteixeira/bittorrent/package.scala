@@ -1,14 +1,13 @@
 package com.cmhteixeira
 
 import com.cmhteixeira.bencode.Bencode
-import org.apache.commons.codec.binary.Hex
 
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.util
 
 package bittorrent {
+  import scodec.bits.ByteVector
 
   case class PeerId(underlying: String)
 
@@ -22,32 +21,23 @@ package bittorrent {
   sealed trait InfoHash {
     def hex: String
     def bytes: Array[Byte]
-
     override final def toString: String = hex
-
-    override def equals(obj: Any): Boolean =
-      if (!obj.isInstanceOf[InfoHash]) false else util.Arrays.equals(obj.asInstanceOf[InfoHash].bytes, bytes)
   }
 
   object InfoHash {
+    private case class InfoHashImpl(immutableBytes: ByteVector) extends InfoHash {
+      override def hex: String = immutableBytes.toHex
+      override def bytes: Array[Byte] = immutableBytes.toArray
+    }
 
     def apply(bencode: Bencode): InfoHash = {
       val md: MessageDigest = MessageDigest.getInstance("SHA-1")
-      val infoHash = md.digest(com.cmhteixeira.bencode.serialize(bencode))
-
-      new InfoHash {
-        override val hex: String = Hex.encodeHexString(infoHash)
-        override val bytes: Array[Byte] = infoHash
-      }
+      InfoHashImpl(ByteVector(md.digest(com.cmhteixeira.bencode.serialize(bencode))))
     }
 
     def apply(theBytes: Array[Byte]): Option[InfoHash] =
       if (theBytes.length != 20) None
-      else
-        Some(new InfoHash {
-          override val hex: String = Hex.encodeHexString(theBytes)
-          override val bytes: Array[Byte] = util.Arrays.copyOf(theBytes, theBytes.length)
-        })
+      else Some(InfoHashImpl(ByteVector(theBytes)))
   }
 
   /** Unresolved tracker socket.

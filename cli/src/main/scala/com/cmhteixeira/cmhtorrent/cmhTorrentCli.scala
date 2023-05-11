@@ -4,9 +4,11 @@ import com.cmhteixeira.bittorrent.PeerId
 import com.cmhteixeira.bittorrent.client.{CmhClientImpl, SwarmFactoryImpl}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
 import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl, TrackerImplWithJava}
+import com.cmhteixeira.bittorrent2.tracker.TrackerJavaImpl
 
 import java.nio.file.Paths
 import java.security.SecureRandom
+import java.time.Duration
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.concurrent.ExecutionContext
@@ -48,7 +50,7 @@ object cmhTorrentCli extends App {
 //  )
 
   private val tracker2 = TrackerImplWithJava(
-    8083,
+    new TrackerJavaImpl.Config(8083, peerId, 123, Duration.ofSeconds(5)),
     Executors.newScheduledThreadPool(100),
     RandomTransactionIdGenerator(SecureRandom.getInstanceStrong)
   )

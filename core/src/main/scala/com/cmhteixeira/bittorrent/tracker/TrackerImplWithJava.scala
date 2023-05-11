@@ -8,17 +8,17 @@ import com.google.common.collect.ImmutableList
 
 import java.net.InetSocketAddress
 import java.util.concurrent.Executor
-import scala.jdk.CollectionConverters.IterableHasAsJava
+import scala.jdk.CollectionConverters.{IterableHasAsJava, IterableHasAsScala}
 
 class TrackerImplWithJava private (trackerJavaImpl: TrackerJavaImpl) extends Tracker {
   override def peers(
       infoHash: bittorrent.InfoHash
   ): Set[InetSocketAddress] = ???
   override def statistics: Map[bittorrent.InfoHash, Tracker.Statistics] =
-    ???
+    trackerJavaImpl.statistics().entrySet().stream().toList.asScala.map(a => (a.getKey, a.getValue)).toMap
   override def submit(torrent: Torrent): Unit = {
     val udpSockets = torrent.announce +: torrent.announceList.fold[List[UdpSocket]](List.empty)(a => a.flatten.toList)
-    trackerJavaImpl.submit(torrent.infoHash.hex, new ImmutableList.Builder().addAll(udpSockets.asJava).build())
+    trackerJavaImpl.submit(torrent.infoHash, new ImmutableList.Builder().addAll(udpSockets.asJava).build())
   }
 
 }
@@ -26,6 +26,6 @@ class TrackerImplWithJava private (trackerJavaImpl: TrackerJavaImpl) extends Tra
 object TrackerImplWithJava {
   def apply(trackerJavaImpl: TrackerJavaImpl): TrackerImplWithJava = new TrackerImplWithJava(trackerJavaImpl)
 
-  def apply(port: Int, ex: Executor, txdIdGenerator: TransactionIdGenerator): TrackerImplWithJava =
-    new TrackerImplWithJava(new TrackerJavaImpl(port, txdIdGenerator, ex))
+  def apply(config: TrackerJavaImpl.Config, ex: Executor, txdIdGenerator: TransactionIdGenerator): TrackerImplWithJava =
+    new TrackerImplWithJava(new TrackerJavaImpl(config, txdIdGenerator, ex))
 }
