@@ -7,7 +7,7 @@ import com.google.common.collect.ImmutableSet;
 import java.net.InetSocketAddress;
 
 public interface TrackerJava {
-    public void submit(InfoHash torrent, ImmutableList<UdpSocket> trackers);
+  public void submit(InfoHash torrent, ImmutableList<UdpSocket> trackers);
 
-    public ImmutableSet<InetSocketAddress> peers(InfoHash torrent);
+  public ImmutableSet<InetSocketAddress> peers(InfoHash torrent);
 }

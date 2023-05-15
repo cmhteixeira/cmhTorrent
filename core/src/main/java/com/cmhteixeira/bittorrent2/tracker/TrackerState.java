@@ -6,10 +6,11 @@ import java.util.concurrent.CompletableFuture;
 import org.javatuples.Pair;
 
 public interface TrackerState {
-    record ConnectSent(int txdId, CompletableFuture<Pair<ConnectResponse, Long>> fut) implements TrackerState {}
+  record ConnectSent(int txdId, CompletableFuture<Pair<ConnectResponse, Long>> fut)
+      implements TrackerState {}
 
-    record AnnounceSent(int txnId, long connectionId, CompletableFuture<AnnounceResponse> fut)
-            implements TrackerState {}
+  record AnnounceSent(int txnId, long connectionId, CompletableFuture<AnnounceResponse> fut)
+      implements TrackerState {}
 
-    record AnnounceReceived(long timestamp, int numPeers) implements TrackerState {}
+  record AnnounceReceived(long timestamp, int numPeers) implements TrackerState {}
 }
