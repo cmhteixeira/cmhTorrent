@@ -3,19 +3,17 @@ package com.cmhteixeira.bittorrent2.tracker;
 import com.cmhteixeira.bittorrent.InfoHash;
 import com.cmhteixeira.bittorrent.tracker.AnnounceResponse;
 import com.cmhteixeira.bittorrent.tracker.ConnectResponse;
-import com.cmhteixeira.bittorrent.tracker.ConnectResponse$;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.javatuples.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.util.Either;
 
 final class TrackerReader implements Runnable {
   final DatagramSocket udpSocket;
@@ -48,28 +46,29 @@ final class TrackerReader implements Runnable {
     int payloadSize = dg.getLength();
     InetSocketAddress origin = (InetSocketAddress) dg.getSocketAddress();
     if (payloadSize == 16) {
-      Either<String, ConnectResponse> a = ConnectResponse$.MODULE$.deserialize(dg.getData());
-      if (a.isLeft()) {
-        logger.error(String.format("Error deserializing: '%s'", a.left().get()));
-      } else {
-        ConnectResponse connectResponse = a.right().get();
+      try {
+        ConnectResponse connectResponse = ConnectResponse.deserializeJava(dg.getData());
         logger.info(
             String.format(
                 "Received potential connect response from %s with txdId %s and connection id %s",
                 origin, connectResponse.transactionId(), connectResponse.connectionId()));
         processConnect(origin, connectResponse, System.nanoTime());
+      } catch (Error e) {
+        logger.error(
+            String.format("Deserializing to connect response from '%s'", dg.getSocketAddress()), e);
       }
     } else if (payloadSize >= 20 && (payloadSize - 20) % 6 == 0) {
-      Either<String, AnnounceResponse> a = AnnounceResponse.deserialize(dg.getData(), payloadSize);
-      if (a.isLeft()) {
-        logger.error(String.format("Error deserializing: '%s'", a.left().get()));
-      } else {
-        AnnounceResponse announceResponse = a.right().get();
+      try {
+        AnnounceResponse announceResponse =
+            AnnounceResponse.deserializeJava(dg.getData(), payloadSize);
         logger.info(
             String.format(
-                "Received potential announce response from %s with txdId %s.",
+                "Potential announce response from %s with txdId %s.",
                 origin, announceResponse.transactionId()));
         processAnnounce(origin, announceResponse);
+      } catch (Error e) {
+        logger.error(
+            String.format("Deserializing to announce response from %s", dg.getSocketAddress()), e);
       }
     } else {
       logger.error("Not implemented.");
@@ -79,46 +78,42 @@ final class TrackerReader implements Runnable {
   private void processConnect(
       InetSocketAddress origin, ConnectResponse connectResponse, long timestamp) {
     ImmutableMap<InfoHash, State> currentState = theSharedState.get();
-    ImmutableList<TrackerState.ConnectSent> thistha =
+    Optional<TrackerState.ConnectSent> connectSentOptional =
         currentState.entrySet().stream()
             .flatMap(
-                entry -> {
-                  State state4Torrent = entry.getValue();
-                  return state4Torrent.trackers().entrySet().stream()
-                      .flatMap(
-                          t ->
-                              switch (t.getValue()) {
-                                case TrackerState.ConnectSent lk -> {
-                                  if (lk.txdId() == connectResponse.transactionId()
-                                      && t.getKey().equals(origin)) yield Stream.of(lk);
-                                  else yield Stream.empty();
-                                }
-                                default -> Stream.empty();
-                              });
-                })
-            .collect(ImmutableList.toImmutableList());
+                entryPerTorrent ->
+                    entryPerTorrent.getValue().trackers().entrySet().stream()
+                        .flatMap(
+                            entryPerTracker ->
+                                switch (entryPerTracker.getValue()) {
+                                  case TrackerState.ConnectSent connectSent -> {
+                                    if (connectSent.txdId() == connectResponse.transactionId()
+                                        && entryPerTracker.getKey().equals(origin))
+                                      yield Stream.of(connectSent);
+                                    else yield Stream.empty();
+                                  }
+                                  default -> Stream.empty();
+                                }))
+            .findFirst();
 
-    int size = thistha.size();
-    if (size == 1) {
-      TrackerState.ConnectSent conSent = thistha.get(0);
+    if (connectSentOptional.isPresent()) {
+      TrackerState.ConnectSent connectSent = connectSentOptional.get();
       logger.info(
           String.format(
               "Matched Connect response: Tracker=%s,txdId=%s,connId=%s",
               origin, connectResponse.transactionId(), connectResponse.connectionId()));
-      conSent.fut().complete(new Pair<>(connectResponse, timestamp));
-    } else if (size == 0) {
+      connectSent.fut().complete(new Pair<>(connectResponse, timestamp));
+    } else
       logger.info(
           String.format(
               "No trackers waiting connection for txdId %s. All trackers: ???.",
               connectResponse.transactionId()));
-    } else {
-      logger.info("Fooar ---");
-    }
   }
 
   private void processAnnounce(InetSocketAddress origin, AnnounceResponse announceResponse) {
     ImmutableMap<InfoHash, State> currentState = theSharedState.get();
-    ImmutableList<TrackerState.AnnounceSent> thistha =
+
+    Optional<TrackerState.AnnounceSent> announceSentOptional =
         currentState.entrySet().stream()
             .flatMap(
                 entry -> {
@@ -135,11 +130,10 @@ final class TrackerReader implements Runnable {
                                 default -> Stream.empty();
                               });
                 })
-            .collect(ImmutableList.toImmutableList());
+            .findFirst();
 
-    int size = thistha.size();
-    if (size == 1) {
-      TrackerState.AnnounceSent announceSent = thistha.get(0);
+    if (announceSentOptional.isPresent()) {
+      TrackerState.AnnounceSent announceSent = announceSentOptional.get();
       logger.info(
           String.format(
               "Matched Announce response: Tracker=%s,txdId=%s,connId=%s. Peers: %s",
@@ -148,10 +142,6 @@ final class TrackerReader implements Runnable {
               announceSent.connectionId(),
               announceResponse.peers().size()));
       announceSent.fut().complete(announceResponse);
-    } else if (size == 0) {
-      logger.info("announce 0 elements");
-    } else {
-      logger.info("announce" + size + "elements.");
-    }
+    } else logger.info("announce 0 elements");
   }
 }

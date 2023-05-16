@@ -128,7 +128,7 @@ public class TrackerJavaImpl implements TrackerJava {
         .exceptionallyComposeAsync(
             error -> {
               if (error instanceof CompletionException) {
-                Throwable cause = ((CompletionException) error).getCause();
+                Throwable cause = error.getCause();
                 if (cause instanceof TimeoutException) {
                   logger.warn(
                       String.format(
@@ -219,10 +219,7 @@ public class TrackerJavaImpl implements TrackerJava {
           ImmutableMap.<InfoHash, State>builder()
               .putAll(
                   currentState.entrySet().stream()
-                      .filter(
-                          a -> {
-                            return !Objects.equals(a.getKey(), torrent);
-                          })
+                      .filter(a -> !Objects.equals(a.getKey(), torrent))
                       .collect(ImmutableList.toImmutableList()))
               .put(torrent, newState4Torrent)
               .build();
@@ -279,10 +276,7 @@ public class TrackerJavaImpl implements TrackerJava {
           ImmutableMap.<InfoHash, State>builder()
               .putAll(
                   currentState.entrySet().stream()
-                      .filter(
-                          a -> {
-                            return !Objects.equals(a.getKey(), torrent);
-                          })
+                      .filter(a -> !Objects.equals(a.getKey(), torrent))
                       .collect(ImmutableList.toImmutableList()))
               .put(torrent, newState4Torrent)
               .build();
@@ -396,7 +390,7 @@ public class TrackerJavaImpl implements TrackerJava {
     return stats;
   }
 
-  private static record Connection(long connectionId, long timestamp) {}
+  private record Connection(long connectionId, long timestamp) {}
 
-  public static record Config(int port, PeerId peerId, int key, Duration announceTimeInterval) {}
+  public record Config(int port, PeerId peerId, int key, Duration announceTimeInterval) {}
 }

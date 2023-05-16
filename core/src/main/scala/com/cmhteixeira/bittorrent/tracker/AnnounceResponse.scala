@@ -76,6 +76,12 @@ private[tracker] object AnnounceResponse {
     else if ((sizePacket - 20) % 6 != 0) Left("Received packet bla bla bla")
     else deserializeInternal(in, (sizePacket - 20) / 6)
 
+  def deserializeJava(in: Array[Byte], sizePacket: Int): AnnounceResponse =
+    deserialize(in, sizePacket).fold(
+      error => throw new IllegalArgumentException(s"Error deserializing into announce response: '$error'."),
+      identity
+    )
+
   implicit val show: Show[AnnounceResponse] = new Show[AnnounceResponse] {
 
     override def show(t: AnnounceResponse): String =
