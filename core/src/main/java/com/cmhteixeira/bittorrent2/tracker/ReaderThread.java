@@ -15,14 +15,14 @@ import org.javatuples.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-final class TrackerReader implements Runnable {
+final class ReaderThread implements Runnable {
   final DatagramSocket udpSocket;
   final AtomicReference<ImmutableMap<InfoHash, State>> theSharedState;
   final int packetSize = 65507;
 
   private final Logger logger = LoggerFactory.getLogger("TrackerReader");
 
-  public TrackerReader(
+  public ReaderThread(
       DatagramSocket udpSocket, AtomicReference<ImmutableMap<InfoHash, State>> sharedState) {
     this.udpSocket = udpSocket;
     this.theSharedState = sharedState;

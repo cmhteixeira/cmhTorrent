@@ -34,7 +34,7 @@ public class TrackerJavaImpl implements TrackerJava {
     this.ex = ex;
     this.config = config;
     Thread readerThread =
-        new Thread(new TrackerReader(this.socket, this.sharedState), "ReaderThread");
+        new Thread(new ReaderThread(this.socket, this.sharedState), "ReaderThread");
     readerThread.start();
   }
 
