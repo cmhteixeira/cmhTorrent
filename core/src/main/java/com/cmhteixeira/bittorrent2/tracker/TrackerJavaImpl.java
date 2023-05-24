@@ -39,7 +39,7 @@ public class TrackerJavaImpl implements TrackerJava {
   }
 
   @Override
-  public void submit(InfoHash torrent, ImmutableList<UdpSocket> trackers) {
+  public void submit(InfoHash torrent, List<UdpSocket> trackers) {
     ImmutableMap<InfoHash, State> currentState = sharedState.get();
     ImmutableMap<InfoHash, State> newState =
         ImmutableMap.<InfoHash, State>builder()
@@ -67,7 +67,7 @@ public class TrackerJavaImpl implements TrackerJava {
   }
 
   private ImmutableList<CompletableFuture<InetSocketAddress>> addTorrents(
-      InfoHash torrent, ImmutableList<UdpSocket> trackers) {
+      InfoHash torrent, List<UdpSocket> trackers) {
     return trackers.stream()
         .map(
             udpSocket ->

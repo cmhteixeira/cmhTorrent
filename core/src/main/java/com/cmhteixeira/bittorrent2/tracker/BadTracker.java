@@ -2,14 +2,13 @@ package com.cmhteixeira.bittorrent2.tracker;
 
 import com.cmhteixeira.bittorrent.InfoHash;
 import com.cmhteixeira.bittorrent.UdpSocket;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 
 public class BadTracker implements TrackerJava {
@@ -23,7 +22,7 @@ public class BadTracker implements TrackerJava {
   }
 
   @Override
-  public void submit(InfoHash torrent, ImmutableList<UdpSocket> trackers) {}
+  public void submit(InfoHash torrent, List<UdpSocket> trackers) {}
 
   @Override
   public ImmutableSet<InetSocketAddress> peers(InfoHash torrent) {
