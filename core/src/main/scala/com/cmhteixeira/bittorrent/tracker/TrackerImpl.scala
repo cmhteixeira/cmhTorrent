@@ -197,14 +197,14 @@ private[tracker] final class TrackerImpl private (
     }
   }
 
-  private def timeout[A](fut: Future[A], timeout: FiniteDuration): Future[A] = {
+  private def timeout[A](fut: Future[A], timeout: FiniteDuration)(implicit ec: ExecutionContext): Future[A] = {
     val promise = Promise[A]()
     scheduler.schedule(
       new Runnable { override def run(): Unit = promise.tryFailure(new TimeoutException(s"Timeout after $timeout.")) },
       timeout.toMillis,
       TimeUnit.MILLISECONDS
     )
-    fut.onComplete(promise.tryComplete)(mainExecutor)
+    fut.onComplete(promise.tryComplete)
     promise.future
   }
 
