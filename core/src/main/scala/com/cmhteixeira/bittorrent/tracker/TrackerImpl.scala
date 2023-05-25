@@ -143,11 +143,11 @@ private[tracker] final class TrackerImpl private (
     def inner(n: Int): Future[AnnounceResponse] = {
       val currentState = state.get()
       currentState.get(infoHash) match {
-        case Some(state4Torrent @ State(_, _)) =>
+        case Some(State(peers, trackers)) =>
           val txdId = txnIdGen.txnId()
           val promise = Promise[AnnounceResponse]()
-          val announce = AnnounceSent(txdId, connection.id, promise)
-          val newState = currentState + (infoHash -> state4Torrent.updateEntry(tracker, announce))
+          val newState4Torrent = State(peers, trackers + (tracker -> AnnounceSent(txdId, connection.id, promise)))
+          val newState = currentState + (infoHash -> newState4Torrent)
           if (!state.compareAndSet(currentState, newState)) inner(n)
           else {
             sendAnnounceDownTheWire(infoHash, connection.id, txdId, tracker)
@@ -171,16 +171,16 @@ private[tracker] final class TrackerImpl private (
   private def setAndReannounce(
       infoHash: InfoHash,
       tracker: InetSocketAddress,
-      peers: Set[InetSocketAddress],
+      newPeers: Set[InetSocketAddress],
       connection: Connection
   )(implicit ec: ExecutionContext): Future[Unit] = {
     val currentState = state.get()
     currentState.get(infoHash) match {
-      case Some(state4Torrent @ State(_, _)) =>
-        val newEntry4Tracker = state4Torrent.updateEntry(tracker, AnnounceReceived(connection.timestamp, peers.size))
-        val newState =
-          currentState + (infoHash -> newEntry4Tracker.copy(peers = newEntry4Tracker.peers ++ peers))
-        if (!state.compareAndSet(currentState, newState)) setAndReannounce(infoHash, tracker, peers, connection)
+      case Some(State(peers, trackers)) =>
+        val newState4Torrent =
+          State(peers ++ newPeers, trackers + (tracker -> AnnounceReceived(connection.timestamp, newPeers.size)))
+        val newState = currentState + (infoHash -> newState4Torrent)
+        if (!state.compareAndSet(currentState, newState)) setAndReannounce(infoHash, tracker, newPeers, connection)
         else
           for {
             _ <- after(Success(()), config.announceTimeInterval)
@@ -188,7 +188,7 @@ private[tracker] final class TrackerImpl private (
               if (limitConnectionId(connection.timestamp))
                 failed(new TimeoutException(s"Connection to $tracker (${connAgeSec(connection.timestamp)} s) expired."))
               else Future.unit
-            _ = logger.info(s"Re-announcing to $tracker for $infoHash. Previous peers obtained: ${peers.size}")
+            _ = logger.info(s"Re-announcing to $tracker for $infoHash. Previous peers obtained: ${newPeers.size}")
             announceRes <- announce(infoHash, tracker, connection)
             _ <- setAndReannounce(infoHash, tracker, announceRes.peers.toSet, connection)
           } yield ()

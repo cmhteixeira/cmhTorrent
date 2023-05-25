@@ -10,12 +10,6 @@ package object tracker {
       address -> state
     }.toList
 
-    def updateEntry(tracker: InetSocketAddress, newState: TrackerState): State =
-      copy(trackers = trackers.map {
-        case (trackerSocket, _) if trackerSocket == tracker => (trackerSocket, newState)
-        case pair => pair
-      })
-
     def announceResponse(
         trackerSocket: InetSocketAddress,
         announceResponse: AnnounceResponse
