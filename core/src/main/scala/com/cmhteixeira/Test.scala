@@ -3,14 +3,16 @@ import java.util.concurrent.atomic.AtomicReference
 
 class Test {
 
-  val sharedStateImmut = new AtomicReference[Map[String, List[String]]](Map("foo" -> List.empty))
+  private val sharedStateImmut = new AtomicReference[Map[String, Set[String]]](Map("foo" -> Set.empty))
 
-  def goodDevImmut: Map[String, List[String]] = {
+  def goodDevImmut(iter: Int): Map[String, Set[String]] = {
     val currentMap = sharedStateImmut.get()
 
-    val newMap = currentMap + ("foo" -> Li)
+    val newMap = currentMap + ("foo" -> (currentMap("foo") + s"monkey-${Thread.currentThread().getName}-$iter"))
+
+    if (!sharedStateImmut.compareAndSet(currentMap, newMap)) goodDevImmut(iter)
+    else newMap
 
   }
-  def getStateImmut: Map[String, List[String]] = sharedStateImmut.get
+  def getStateImmut: Map[String, Set[String]] = sharedStateImmut.get
 }
-{}

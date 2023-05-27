@@ -1,16 +1,15 @@
 package com.cmhteixeira.bittorrent2.tracker;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.*;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class Test {
+public class TestJava {
   AtomicReference<Map<String, List<String>>> sharedState;
   AtomicReference<ImmutableMap<String, ImmutableList<String>>> sharedStateImmut;
 
-  public Test() {
+  public TestJava() {
     Map<String, List<String>> hashMap = new HashMap<>();
     hashMap.put("foo", new ArrayList<>());
     this.sharedState = new AtomicReference<>(hashMap);
@@ -29,34 +28,32 @@ public class Test {
     }
   }
 
-  public Map<String, List<String>> distractedDev() {
+  public void distractedDev() {
     Map<String, List<String>> currentMap = sharedState.get();
     Map<String, List<String>> theNewMap = new HashMap<>();
 
     for (Map.Entry<String, List<String>> entry : currentMap.entrySet()) {
       String theKey = entry.getKey();
       List<String> theValue = entry.getValue();
-      theValue.add("monkey");
+      theValue.add("bar");
       theNewMap.put(theKey, theValue);
     }
 
     if (!sharedState.compareAndSet(currentMap, theNewMap)) distractedDev();
-    return theNewMap;
   }
 
-  public Map<String, List<String>> goodDev() {
+  public void goodDev() {
     Map<String, List<String>> currentMap = sharedState.get();
     Map<String, List<String>> theNewMap = new HashMap<>();
 
     for (Map.Entry<String, List<String>> entry : currentMap.entrySet()) {
       String theKey = entry.getKey();
       List<String> newList = new ArrayList<>(entry.getValue());
-      newList.add("monkey");
+      newList.add("bar");
       theNewMap.put(theKey, newList);
     }
 
     if (!sharedState.compareAndSet(currentMap, theNewMap)) goodDev();
-    return theNewMap;
   }
 
   public ImmutableMap<String, ImmutableList<String>> goodDevImmut() {

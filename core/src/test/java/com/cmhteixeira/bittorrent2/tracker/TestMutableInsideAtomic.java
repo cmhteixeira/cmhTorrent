@@ -1,20 +1,19 @@
-package com.cmhteixeira;
-
-import com.cmhteixeira.bittorrent2.tracker.Test;
+package com.cmhteixeira.bittorrent2.tracker;
 
 import java.util.List;
+
 
 public class TestMutableInsideAtomic {
 
   public static void main(String[] args) throws InterruptedException {
-    Test test = new Test();
+    TestJava testJava = new TestJava();
     Runnable runnable =
         new Runnable() {
           @Override
           public void run() {
             int limit = 0;
-            while (limit < 100000) {
-              test.goodDevImmut();
+            while (limit < 10000) {
+              testJava.goodDev();
               ++limit;
             }
           }
@@ -28,9 +27,8 @@ public class TestMutableInsideAtomic {
     threadA.join();
     threadB.join();
 
-    List<String> res = test.getStateImmut().get("foo");
+    List<String> res = testJava.getState().get("foo");
     int num = res.size();
     System.out.println(num);
-
   }
 }
