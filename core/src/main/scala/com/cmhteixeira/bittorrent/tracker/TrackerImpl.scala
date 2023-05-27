@@ -25,7 +25,6 @@ private[tracker] final class TrackerImpl private (
     txnIdGen: TransactionIdGenerator
 ) extends Tracker {
   private val logger = LoggerFactory.getLogger("TrackerImpl")
-
   @tailrec
   override def submit(torrent: Torrent): Unit = {
     val currentState = state.get()
