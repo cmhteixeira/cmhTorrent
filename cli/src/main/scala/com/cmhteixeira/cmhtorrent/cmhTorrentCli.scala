@@ -3,7 +3,8 @@ package com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.bittorrent.PeerId
 import com.cmhteixeira.bittorrent.client.{CmhClientImpl, SwarmFactoryImpl}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
-import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl}
+import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, core}
+import com.cmhteixeira.bittorrent.tracker.core.TrackerImpl
 
 import java.nio.file.Paths
 import java.security.SecureRandom
@@ -40,7 +41,7 @@ object cmhTorrentCli extends App {
         new Thread(r, s"$prefix-${counter.getAndIncrement()}")
     }))
 
-  private val tracker = TrackerImpl(
+  private val tracker = core.TrackerImpl(
     threadPool("trackerPool-"),
     scheduler("tracker", 20),
     RandomTransactionIdGenerator(SecureRandom.getInstanceStrong),

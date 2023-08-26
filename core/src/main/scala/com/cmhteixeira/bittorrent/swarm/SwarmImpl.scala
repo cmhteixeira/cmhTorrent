@@ -6,9 +6,10 @@ import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.State.PieceState._
 import com.cmhteixeira.bittorrent.swarm.State.{Active, Pieces, PeerState => InnerState}
 import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
-import com.cmhteixeira.bittorrent.swarm.SwarmImpl.maxBlocksAtOnce
+import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{PeerFactory, maxBlocksAtOnce}
 import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
 import com.cmhteixeira.bittorrent.tracker.Tracker
+import org.reactivestreams.{Subscriber, Subscription}
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
@@ -27,17 +28,36 @@ private[bittorrent] class SwarmImpl private (
     torrent: Torrent,
     tracker: Tracker,
     scheduler: ScheduledExecutorService,
-    upsertPeers: UpsertPeers,
     config: SwarmImpl.Configuration,
     randomGen: Random,
     fileManager: TorrentFileManager,
-    mainExecutor: ExecutionContext
+    mainExecutor: ExecutionContext,
+    peerFactory: PeerFactory
 ) extends Swarm {
-  private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash}")
-  tracker.submit(torrent.toTrackerTorrent)
-  scheduler.scheduleAtFixedRate(upsertPeers, 0, 10, TimeUnit.SECONDS)
+  private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash.hex.take(6)}")
+  tracker
+    .submit(torrent.toTrackerTorrent)
+    .subscribe(new TrackerSubscriber)
 
-  mainExecutor.execute(new Runnable { def run(): Unit = updatePieces() })
+  private class TrackerSubscriber extends Subscriber[InetSocketAddress] {
+    override def onSubscribe(s: Subscription): Unit = {
+      s.request(Long.MaxValue)
+      logger.info(s"Started subscription for tracker for '${torrent.infoHash}'")
+    }
+    override def onNext(t: InetSocketAddress): Unit = {
+      val currentPeers = peers.get()
+      if (currentPeers.contains(t)) ()
+      else {
+        if (!peers.compareAndSet(currentPeers, currentPeers + (t -> Active(peerFactory(t)))))
+          onNext(t) // todo: peer is recretead.
+        else ()
+      }
+    }
+    override def onError(t: Throwable): Unit = logger.error("Tracker stopped subscription.", t)
+    override def onComplete(): Unit = logger.error("Tracker completed.")
+  }
+
+  mainExecutor.execute(() => updatePieces())
 
   override def downloadCompleted: Future[Path] = ???
 
@@ -260,11 +280,11 @@ object SwarmImpl {
       torrent = torrent,
       tracker = tracker,
       scheduler = scheduler,
-      upsertPeers = UpsertPeers(peers, peerFactory, torrent, tracker),
       config = Configuration(downloadDir, blockSize),
       randomGen = random,
       fileManager = writerThread.get,
-      mainExecutor = mainExecutor
+      mainExecutor = mainExecutor,
+      peerFactory
     )
   }
 }

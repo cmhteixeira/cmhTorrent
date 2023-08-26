@@ -1,7 +1,9 @@
-package com.cmhteixeira.bittorrent.tracker
+package com.cmhteixeira.bittorrent.tracker.core
 
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.tracker.ReaderThread.maximumUdpPacketSize
+import com.cmhteixeira.bittorrent.tracker.TrackerState.{AnnounceSent, ConnectSent}
+import com.cmhteixeira.bittorrent.tracker.core.ReaderThread.maximumUdpPacketSize
+import com.cmhteixeira.bittorrent.tracker.{AnnounceResponse, ConnectResponse, TrackerState}
 import org.slf4j.LoggerFactory
 
 import java.net.{DatagramPacket, DatagramSocket, InetSocketAddress}
@@ -9,10 +11,9 @@ import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
-import TrackerState._
 private[tracker] class ReaderThread private (
     udpSocket: DatagramSocket,
-    state: AtomicReference[Map[InfoHash, State]]
+    state: AtomicReference[Map[InfoHash, Map[InetSocketAddress, TrackerState]]]
 ) extends Runnable {
   private val logger = LoggerFactory.getLogger("TrackerReader")
 
@@ -61,7 +62,7 @@ private[tracker] class ReaderThread private (
   private def processConnect(origin: InetSocketAddress, connectResponse: ConnectResponse, timestamp: Long): Unit = {
     val currentState = state.get()
     val ConnectResponse(txnId, connectId) = connectResponse
-    currentState.toList.flatMap { case (hash, State(_, underlying)) =>
+    currentState.toList.flatMap { case (hash, underlying) =>
       underlying.get(origin) match {
         case Some(conSent @ ConnectSent(txnId, _)) if txnId == connectResponse.transactionId => List(hash -> conSent)
         case _ => List.empty
@@ -82,7 +83,15 @@ private[tracker] class ReaderThread private (
     val currentState = state.get()
     val AnnounceResponse(_, _, _, _, _, peers) = announceResponse
     currentState.flatMap { case (infoHash, state4Torrent) =>
-      state4Torrent.announceResponse(origin, announceResponse).map(a => (infoHash, state4Torrent, a))
+      state4Torrent
+        .map { case (address, state) => address -> state }
+        .toList
+        .collectFirst {
+          case (thisTrackerSocket, announceSent @ AnnounceSent(txnId, _, _))
+              if thisTrackerSocket == origin && txnId == announceResponse.transactionId =>
+            announceSent
+        }
+        .map(a => (infoHash, state4Torrent, a))
     }.toList match {
       case Nil => logger.warn(s"Received possible Announce response from '$origin', but no state across all torrents.")
       case all @ (one :: two :: other) => logger.warn(s"Omg... this shouldn't be happening")
@@ -99,6 +108,6 @@ private[tracker] object ReaderThread {
 
   def apply(
       socket: DatagramSocket,
-      state: AtomicReference[Map[InfoHash, State]]
+      state: AtomicReference[Map[InfoHash, Map[InetSocketAddress, TrackerState]]]
   ): ReaderThread = new ReaderThread(socket, state)
 }

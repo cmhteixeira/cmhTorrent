@@ -1,29 +1,7 @@
 package com.cmhteixeira.bittorrent
 
-import java.net.InetSocketAddress
 import scala.concurrent.Promise
 package object tracker {
-  import TrackerState._
-  private[tracker] case class State(peers: Set[InetSocketAddress], trackers: Map[InetSocketAddress, TrackerState]) {
-
-    def toList: List[(InetSocketAddress, TrackerState)] = trackers.map { case (address, state) =>
-      address -> state
-    }.toList
-
-    def announceResponse(
-        trackerSocket: InetSocketAddress,
-        announceResponse: AnnounceResponse
-    ): Option[AnnounceSent] =
-      toList.collectFirst {
-        case (thisTrackerSocket, announceSent @ AnnounceSent(txnId, _, _))
-            if thisTrackerSocket == trackerSocket && txnId == announceResponse.transactionId =>
-          announceSent
-      }
-  }
-
-  private[tracker] object State {
-    val empty: State = State(Set.empty, Map.empty)
-  }
 
   private[tracker] sealed trait TrackerState
 

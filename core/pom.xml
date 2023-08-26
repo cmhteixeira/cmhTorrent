@@ -25,6 +25,10 @@
       <artifactId>scala-library</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.cmhteixeira</groupId>
+      <artifactId>streams</artifactId>
+    </dependency>
+    <dependency>
       <groupId>io.circe</groupId>
       <artifactId>circe-core_${scala.compat.version}</artifactId>
     </dependency>
