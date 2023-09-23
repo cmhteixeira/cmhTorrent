@@ -99,7 +99,9 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val torrentDetails = torrentClient.listTorrents
     val options = mapAsJavaMap(
       Map(
-        Printer.COLUMNS -> seqAsJavaList(List("name", "piecesDownloaded", "peersOn", "peersInactive"))
+        Printer.COLUMNS -> seqAsJavaList(
+          List("name", "piecesDownloaded", "peersConnected", "peersUnChoked", "peersReady")
+        )
 //        Printer.SHORT_NAMES -> true
       )
     ): java.util.Map[String, AnyRef]
@@ -108,14 +110,15 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       case (
             CmhClient.Torrent(_, name),
             CmhClient
-              .TorrentDetails(piecesDownloaded, piecesTotal, peersOn, peersConnectedNotActive, peersTotal)
+              .TorrentDetails(piecesDownloaded, piecesTotal, peersTotal, peersConnected, peersUnchoked, peersReady)
           ) =>
         mapAsJavaMap(
           Map(
             "name" -> name,
             "piecesDownloaded" -> s"$piecesDownloaded/$piecesTotal",
-            "peersOn" -> s"$peersOn/$peersTotal",
-            "peersInactive" -> s"$peersConnectedNotActive/$peersTotal"
+            "peersConnected" -> s"$peersConnected/$peersTotal",
+            "peersUnChoked" -> s"$peersUnchoked/$peersConnected",
+            "peersReady" -> s"$peersReady/$peersConnected"
           )
         ): java.util.Map[String, AnyRef]
     })

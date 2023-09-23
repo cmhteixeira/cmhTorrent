@@ -1,40 +1,27 @@
 package com.cmhteixeira.bittorrent.swarm
 
-import com.cmhteixeira.bittorrent.peerprotocol.Peer
-import com.cmhteixeira.bittorrent.swarm.Swarm.PeerState
 import com.cmhteixeira.bittorrent.tracker.Tracker
-
-import java.net.InetSocketAddress
-import java.nio.file.Path
-import scala.concurrent.Future
-
-trait Swarm {
-  def getPeers: Map[InetSocketAddress, PeerState]
+trait Swarm extends AutoCloseable {
   def getPieces: List[Swarm.PieceState]
+  def getPeers: List[Swarm.PeerState]
   def trackerStats: Tracker.Statistics
-
-  def downloadCompleted: Future[Path]
-
-  def close: Unit
+  def close(): Unit
 }
 
 object Swarm {
-  sealed trait PieceState
-
-  object PieceState {
-    case object Downloaded extends PieceState
-    case object Missing extends PieceState
-
-    case class Downloading(
-        totalBlocks: Int,
-        completed: Int
-    ) extends PieceState
-  }
 
   sealed trait PeerState
 
   object PeerState {
-    case class Tried(las: Long) extends PeerState
-    case class On(peerState: Peer.PeerState) extends PeerState
+    case class Connected(chocked: Boolean, numPieces: Int) extends PeerState
+    case object Unconnected extends PeerState
+  }
+
+
+  sealed trait PieceState
+
+  object PieceState {
+    case object Downloaded extends PieceState
+    case class Downloading(totalBlocks: Int, completed: Int) extends PieceState
   }
 }

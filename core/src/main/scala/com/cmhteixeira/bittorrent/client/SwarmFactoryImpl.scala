@@ -7,10 +7,7 @@ import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PeerFactory
 import java.nio.file.Path
 import java.util.concurrent.ScheduledExecutorService
 import scala.concurrent.ExecutionContext
-import scala.util.Random
-
 class SwarmFactoryImpl private (
-    random: Random,
     scheduler: ScheduledExecutorService,
     peerFactoryFactory: SwarmTorrent => PeerFactory,
     mainExecutor: ExecutionContext,
@@ -22,7 +19,6 @@ class SwarmFactoryImpl private (
       torrent = torrent,
       blockSize = blockSize,
       downloadDir = downloadDir,
-      random = random,
       peerFactory = peerFactoryFactory(torrent),
       scheduler = scheduler,
       mainExecutor = mainExecutor,
@@ -33,10 +29,9 @@ class SwarmFactoryImpl private (
 object SwarmFactoryImpl {
 
   def apply(
-      random: Random,
       scheduler: ScheduledExecutorService,
       mainExecutor: ExecutionContext,
       peerFactoryFactory: SwarmTorrent => PeerFactory,
       tracker: Tracker
-  ): SwarmFactoryImpl = new SwarmFactoryImpl(random, scheduler, peerFactoryFactory, mainExecutor, tracker)
+  ): SwarmFactoryImpl = new SwarmFactoryImpl(scheduler, peerFactoryFactory, mainExecutor, tracker)
 }

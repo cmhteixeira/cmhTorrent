@@ -1,38 +1,27 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
-import scodec.bits.{BitVector, ByteVector}
+import scodec.bits.ByteVector
 
-import java.net.SocketAddress
+import java.net.InetSocketAddress
 import scala.concurrent.Future
 
-trait Peer {
-
-  def start(): Unit
-
-  def getState: Peer.PeerState
-
+trait Peer extends AutoCloseable {
   def download(request: BlockRequest): Future[ByteVector]
-
-  def peerAddress: SocketAddress
-
-  def hasPiece(index: Int): Boolean
-
-  def isUnchoked: Boolean
-
-  def pieces: BitVector
-
-  def disconnect(): Unit
-
+  def address: InetSocketAddress
+  def subscribe(s: Peer.Subscriber): Future[Unit]
+  override def toString: String = address.toString
 }
 
 object Peer {
+
+  trait Subscriber {
+    def onError(e: Exception): Unit
+    def chocked(): Unit
+
+    def unChocked(): Unit
+
+    def hasPiece(idx: Int): Unit
+  }
   case class BlockRequest(index: Int, offSet: Int, length: Int)
-
-  sealed trait PeerState
-
-  case object Begin extends PeerState
-  case object TcpConnected extends PeerState
-  case class Error(msg: String) extends PeerState
-  case class HandShaked(peerId: String, choked: Boolean, interested: Boolean, pieces: BitVector) extends PeerState
 }

@@ -2,8 +2,7 @@ package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.{bencode, bittorrent}
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.peerprotocol.Peer.{HandShaked, TcpConnected}
-import com.cmhteixeira.bittorrent.swarm.Swarm.{PeerState, PieceState}
+import com.cmhteixeira.bittorrent.swarm.Swarm.PieceState
 import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import java.nio.file.{Files, Path}
@@ -11,8 +10,6 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Future
 import com.cmhteixeira.cmhtorrent.Torrent
 import org.slf4j.LoggerFactory
-
-import java.net.InetSocketAddress
 
 class CmhClientImpl private (
     torrents: AtomicReference[Map[CmhClient.Torrent, Swarm]],
@@ -52,14 +49,6 @@ class CmhClientImpl private (
       swarmTorrent <- SwarmTorrent(InfoHash(info), torrent)
     } yield swarmTorrent
 
-  override def piecesStatus(infoHash: bittorrent.InfoHash): Any = ???
-
-  override def peerStatus(infoHash: bittorrent.InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]] =
-    torrents.get().find { case (CmhClient.Torrent(thisInfohash, _), _) => thisInfohash == infoHash }.map {
-      case (_, swarm) =>
-        swarm.getPeers
-    }
-
   override def stop(t: bittorrent.InfoHash): Boolean = ???
   override def delete(t: bittorrent.InfoHash): Boolean = ???
 
@@ -78,31 +67,35 @@ class CmhClientImpl private (
   override def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails] =
     torrents
       .get()
-      .map {
-        case (torrent: CmhClient.Torrent, swarm) =>
-          val pieces = swarm.getPieces
-          val piecesDownloaded = pieces.count {
-            case PieceState.Downloaded => true
-            case _ => false
-          }
-          val peersTried = swarm.getPeers.size
-          val peersActive = swarm.getPeers.count {
-            case (_, PeerState.On(_: HandShaked)) => true
-            case _ => false
-          }
-          val peersConnectedNotHandshaked = swarm.getPeers.count {
-            case (_, PeerState.On(TcpConnected)) => true
-            case _ => false
-          }
+      .map { case (torrent: CmhClient.Torrent, swarm) =>
+        val pieces = swarm.getPieces
+        val piecesDownloaded = pieces.count {
+          case PieceState.Downloaded => true
+          case _ => false
+        }
+        val peersInfo = swarm.getPeers
+        val totalPeers = peersInfo.size
+        val peersConnected = peersInfo.collect { case connected: Swarm.PeerState.Connected => connected }
+        val peersUnchoked = peersConnected.count { case Swarm.PeerState.Connected(chocked, _) => !chocked }
+        val peersUnchokedWithPieces = peersConnected.count { case Swarm.PeerState.Connected(chocked, numPieces) =>
+          !chocked && numPieces > 0
+        }
 
-          torrent ->
-            CmhClient
-              .TorrentDetails(piecesDownloaded, pieces.size, peersActive, peersConnectedNotHandshaked, peersTried)
+        torrent ->
+          CmhClient
+            .TorrentDetails(
+              piecesDownloaded,
+              pieces.size,
+              totalPeers,
+              peersConnected.size,
+              peersUnchokedWithPieces,
+              peersUnchoked
+            )
       }
 
-  override def stopAll: Unit = {
+  override def close(): Unit = {
     logger.info("Shutting down.")
-    torrents.get().foreach { case (_, swarm) => swarm.close }
+    torrents.get().foreach { case (_, swarm) => swarm.close() }
   }
 
   override def statistics: Map[CmhClient.Torrent, Tracker.Statistics] =

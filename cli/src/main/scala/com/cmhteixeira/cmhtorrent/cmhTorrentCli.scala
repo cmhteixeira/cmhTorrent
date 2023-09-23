@@ -5,7 +5,6 @@ import com.cmhteixeira.bittorrent.client.{CmhClientImpl, SwarmFactoryImpl}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
 import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, core}
 import com.cmhteixeira.bittorrent.tracker.core.TrackerImpl
-
 import java.nio.file.Paths
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicLong
@@ -49,7 +48,6 @@ object cmhTorrentCli extends App {
   )
   private val swarmFactory =
     SwarmFactoryImpl(
-      random = new SecureRandom(),
       scheduler = scheduler("swarm-", 4),
       mainExecutor = global,
       peerFactoryFactory = swarmTorrent =>

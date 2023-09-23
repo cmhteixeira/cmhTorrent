@@ -5,8 +5,7 @@ import com.cmhteixeira.bittorrent.tracker.TrackerState._
 import com.cmhteixeira.bittorrent.tracker._
 import com.cmhteixeira.bittorrent.tracker.core.TrackerImpl.{Config, Connection, connAgeSec, limitConnectionId}
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId, UdpSocket}
-import com.cmhteixeira.streams.publishers.CmhPublisher
-import org.reactivestreams.{Subscriber, Subscription}
+import org.reactivestreams.{Publisher, Subscriber, Subscription}
 import org.slf4j.LoggerFactory
 
 import java.net.{DatagramPacket, DatagramSocket, InetAddress, InetSocketAddress}
@@ -28,7 +27,7 @@ private[tracker] final class TrackerImpl private (
     txnIdGen: TransactionIdGenerator,
     subscribers: AtomicReference[Map[InfoHash, Set[Subscriber[InetSocketAddress]]]],
     queue: LinkedBlockingQueue[(InfoHash, InetSocketAddress)],
-    udpReceive: CmhPublisher[TrackerResponse]
+    udpReceive: Publisher[TrackerResponse]
 ) extends Tracker {
   private val logger = LoggerFactory.getLogger("Tracker")
 
@@ -109,7 +108,7 @@ private[tracker] final class TrackerImpl private (
     "tracker-subscriber-push"
   ).start()
 
-  override def submit(torrent: Torrent): CmhPublisher[InetSocketAddress] = new CmhPublisher[InetSocketAddress] {
+  override def submit(torrent: Torrent): Publisher[InetSocketAddress] = new Publisher[InetSocketAddress] {
     def subscribeCast(s: Subscriber[InetSocketAddress]): Unit = {
       val currentState = subscribers.get()
       val currentSubscribers = currentState.getOrElse(torrent.infoHash, Set.empty)

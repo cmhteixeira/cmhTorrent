@@ -1,14 +1,14 @@
 package com.cmhteixeira.bittorrent.tracker
 
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.streams.publishers.CmhPublisher
+import org.reactivestreams.Publisher
 
 import java.net.InetSocketAddress
 
 trait Tracker {
   def statistics: Map[InfoHash, Tracker.Statistics]
 
-  def submit(torrent: Torrent): CmhPublisher[InetSocketAddress]
+  def submit(torrent: Torrent): Publisher[InetSocketAddress]
 }
 
 object Tracker {

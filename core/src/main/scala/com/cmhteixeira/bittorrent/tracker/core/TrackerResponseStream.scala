@@ -2,8 +2,7 @@ package com.cmhteixeira.bittorrent.tracker.core
 
 import com.cmhteixeira.bittorrent.tracker.core.TrackerResponseStream.{State, maximumUdpPacketSize}
 import com.cmhteixeira.bittorrent.tracker.{AnnounceResponse, ConnectResponse, TrackerResponse}
-import com.cmhteixeira.streams.publishers.CmhPublisher
-import org.reactivestreams.{Subscriber, Subscription}
+import org.reactivestreams.{Publisher, Subscriber, Subscription}
 import org.slf4j.LoggerFactory
 
 import java.net.{DatagramPacket, DatagramSocket, InetSocketAddress}
@@ -15,7 +14,7 @@ import scala.util.{Failure, Success, Try}
 final class TrackerResponseStream private (
     udpSocket: DatagramSocket,
     subscriber: AtomicReference[State]
-) extends CmhPublisher[TrackerResponse] {
+) extends Publisher[TrackerResponse] {
   private val logger = LoggerFactory.getLogger("TrackerReader")
 
   private def infiniteLoop(): Runnable = new Runnable {

@@ -1,25 +1,10 @@
 package com.cmhteixeira.bittorrent.peerprotocol
 
-import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.{BlockRequest, Subscriber}
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.{Config, Message, State}
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
-import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Config
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.State.{Handshaked, MyState, Unconnected}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
-import com.cmhteixeira.bittorrent.peerprotocol.State.BlockState.{Received, Sent}
-import com.cmhteixeira.bittorrent.peerprotocol.State.TerminalError.{
-  IDisconnected,
-  ImpossibleState,
-  ImpossibleToScheduleKeepAlives,
-  SendingHaveOrAmInterestedMessage,
-  TcpConnection
-}
-import com.cmhteixeira.bittorrent.peerprotocol.State.{
-  ConnectionState,
-  Good,
-  Handshaked,
-  MyState,
-  PeerState,
-  TerminalError
-}
 import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.{BitVector, ByteVector}
 
@@ -31,7 +16,7 @@ import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 
-private[peerprotocol] final class PeerImpl private (
+final class PeerImpl private (
     socket: Socket,
     peerSocket: InetSocketAddress,
     config: Config,
@@ -44,98 +29,48 @@ private[peerprotocol] final class PeerImpl private (
 
   private val logger: Logger = LoggerFactory.getLogger("Peer." + s"${peerSocket.getHostString}:${peerSocket.getPort}")
 
-  def start(): Unit = {
-    logger.info(s"Initiating ...")
-    scheduler.execute(connect)
-  }
-
   private def sendKeepAlive: Runnable =
-    new Runnable {
+    () =>
+      state.get() match {
+        case _: State.Handshaked =>
+          Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
+            case Failure(exception) => logger.warn(s"Failed to send keep alive message.", exception)
+            case Success(_) => logger.info(s"Keep alive message sent.")
+          }
+        case state => logger.warn(s"Not sending scheduled handshake as state is '$state'.")
+      }
 
-      def run(): Unit =
-        state.get() match {
-          case _: Handshaked =>
-            Try(socket.getOutputStream.write(ByteBuffer.allocate(4).putInt(0).array())) match {
-              case Failure(exception) => logger.warn(s"Failed to send keep alive message.", exception)
-              case Success(_) => logger.info(s"Keep alive message sent.")
-            }
-          case state => logger.warn(s"Not sending scheduled handshake as state is '$state'.")
-        }
-    }
-
-  private def registerKeepAliveTask(keepAliveTask: ScheduledFuture[Unit]): Unit = {
-    val currentState = state.get()
-    currentState match {
-      case handshaked: Handshaked =>
-        if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
-          registerKeepAliveTask(keepAliveTask)
-      case TerminalError(_, error) =>
-        keepAliveTask.cancel(true)
-        logger.warn(s"Not scheduling keep-alive tasks as peer in Terminal error state: '$error'.")
-      case state =>
-        logger.warn(s"This state should be impossible at the stage of scheduling keep-alive tasks: '$state'.")
-        keepAliveTask.cancel(true)
-        setError(ImpossibleState(state, "This state should be impossible at the stage of scheduling keep-alive tasks"))
-        socket.close()
-    }
-  }
-
-  private def onceHandshakeReceived(handshakeChannel: Future[Unit]): Unit =
-    handshakeChannel.onComplete {
-      case Failure(exception) => logger.error("Failed to receive handshake. Doing nothing.", exception)
-      case Success(_) =>
-        Try(scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)) match {
-          case Failure(exception) =>
-            logger.warn("Scheduling keep alive messages to peer failed. Have you shutdown the scheduler?", exception)
-            setError(ImpossibleToScheduleKeepAlives(exception))
-            socket.close()
-          case Success(keepAliveTask) => registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]])
-        }
-    }(peersThreadPool)
-
-  private def connect: Runnable =
-    new Runnable {
-
-      def run(): Unit =
-        (for {
-          _ <- Try(socket.connect(peerSocket, config.tcpConnectTimeoutMillis))
-          promise = Promise[Unit]() // ReadThread completes this once it receives the handshake.
-          _ = state.set(State.begin.connected(promise))
-          _ = peersThreadPool.execute(ReadThread(socket, state, infoHash, peerSocket, numberOfPieces))
-          _ <- Try(socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize))
-        } yield promise) match {
-          case Failure(exception) =>
-            logger.warn("Connecting or sending handshake.", exception)
-            setError(TcpConnection(exception))
-          case Success(promise) => onceHandshakeReceived(promise.future)
-        }
-    }
-
-  override def getState: Peer.PeerState =
-    state.get() match {
-      case State.TcpConnected(_) => Peer.TcpConnected
-      case State.Begin => Peer.Begin
-      case Handshaked(_, peerId, _, _, peer, _) =>
-        Peer.HandShaked(
-          peerId = peerId,
-          choked = peer.connectionState.isChocked,
-          interested = peer.connectionState.isInterested,
-          pieces = peer.piecesBitField
-        )
-      case TerminalError(_, _) => Peer.Error("Internal error")
-    }
-
-  override def peerAddress: SocketAddress = peerSocket
+  private def connect(): Runnable =
+    () =>
+      (for {
+        _ <- Try(socket.connect(peerSocket, config.tcpConnectTimeoutMillis))
+        _ = peersThreadPool.execute(ReadThread(socket, HandlerImpl, infoHash, peerSocket, numberOfPieces))
+        _ <- Try(socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize))
+      } yield ()) match {
+        case Failure(exception) =>
+          val msg = "Connecting and sending handshake."
+          logger.warn(msg, exception)
+          internalShutdown(new RuntimeException(msg, exception))
+        case Success(_) => ()
+      }
 
   @tailrec
   override def download(blockRequest: BlockRequest): Future[ByteVector] = {
     val currentState = state.get()
     val BlockRequest(index, offSet, lengthBlock) = blockRequest
     currentState match {
-      case handshaked @ Handshaked(_, _, _, MyState(ConnectionState(_, amInterested), requests), PeerState(_, _), _) =>
+      case handshaked @ State.Handshaked(
+            _,
+            _,
+            _,
+            State.MyState(State.ConnectionState(_, amInterested), requests),
+            State.PeerState(_, _),
+            _,
+            _
+          ) =>
         requests.get(blockRequest) match {
-          case Some(Sent(channel)) => channel.future
-          case Some(Received) =>
+          case Some(State.BlockState.Sent(channel)) => channel.future
+          case Some(State.BlockState.Received) =>
             Future.failed( // todo: better way to deal with this
               new IllegalArgumentException(s"Peer '$peerSocket' has already downloaded block '$blockRequest'.")
             )
@@ -151,9 +86,8 @@ private[peerprotocol] final class PeerImpl private (
                 case Failure(exception) =>
                   val msg = s"Requesting block. Piece: $index, offset: $offSet, length: $lengthBlock."
                   val error = new Exception(msg, exception)
-                  logger.warn(msg, error)
+                  logger.warn(msg, exception)
                   channel.tryFailure(error)
-                  setError(SendingHaveOrAmInterestedMessage(exception))
                   channel.future
                 case Success(_) =>
                   logger.info(s"Sent request for block. Piece: $index, offset: $offSet, length: $lengthBlock.")
@@ -173,66 +107,266 @@ private[peerprotocol] final class PeerImpl private (
   private def requestPiece(request: Request): Try[Unit] =
     Try(socket.getOutputStream.write(request.serialize))
 
-  override def hasPiece(index: Int): Boolean =
-    state.get() match {
-      case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField.get(index)
-      case _ => false
+  @tailrec
+  override def subscribe(
+      s: Peer.Subscriber
+  ): Future[Unit] = {
+    val currentState = state.get()
+    val promise = Promise[Unit]()
+    currentState match {
+      case State.Unsubscribed =>
+        if (!state.compareAndSet(currentState, Unconnected(s, promise))) subscribe(s)
+        else {
+          peersThreadPool.execute(connect())
+          promise.future
+        }
+      case State.Unconnected(_, _) => Future.failed(new IllegalStateException("This peer has already been subscribed."))
+      case _: State.Handshaked => Future.failed(new IllegalStateException("This peer has already been subscribed."))
+      case State.Closed => Future.failed(new IllegalStateException("This peer has already closed."))
     }
-
-  override def isUnchoked: Boolean = state.get() match {
-    case Handshaked(_, _, _, _, PeerState(ConnectionState(isChocked, _), _), _) if !isChocked => true
-    case _ => false
   }
 
-  override def pieces: BitVector =
-    state.get() match {
-      case Handshaked(_, _, _, _, PeerState(_, piecesBitField), _) => piecesBitField
-      case _ => BitVector.low(numberOfPieces)
+  override def close(): Unit = {
+    logger.info("Shutting down.")
+    state.set(PeerImpl.State.Closed)
+    Try { socket.close() } match {
+      case Failure(exception) => logger.warn("Closing the socket.", exception)
+      case Success(_) => ()
     }
+  }
 
-  @tailrec
-  private def setError(msg: TerminalError.Error): Unit = {
+  override def address: InetSocketAddress = peerSocket
+
+  private def internalShutdown(exception: Exception): Unit = {
+    val currentState = state.get()
+    logger.warn(s"Internal shut-down. State: $currentState", exception)
+    currentState match {
+      case State.Closed => ()
+      case State.Unsubscribed => ()
+      case Unconnected(_, channel) => channel.tryFailure(exception)
+      case i: State.Handshaked =>
+        i.keepAliveTasks.foreach(_.cancel(true))
+        i.subscriber.onError(exception)
+    }
+    close()
+  }
+
+  private def receivedBlock(pieceIndex: Int, offSet: Int, block: ByteVector): Unit = {
     val currentState = state.get()
     currentState match {
-      case handshaked: Handshaked =>
-        val error = TerminalError(handshaked, msg)
-        if (!state.compareAndSet(currentState, error)) setError(msg)
-        else {
-          logger.info(s"Error '$msg' encountered. Closing connection")
-          handshaked.keepAliveTasks match {
-            case Some(value) =>
-              logger.info("Cancelling keep-alive tasks.")
-              value.cancel(false)
-            case None => logger.info("No keep alive tasks to cancel.")
-          }
-          logger.info("???")
-          handshaked.me.requests.collect {
-            case (_, Sent(promiseCompletion)) => // todo: Check if usage of try-complete is appropriate
-              promiseCompletion.tryFailure(new Exception(s"Impossible to complete: $msg."))
-          }
-          socket.close()
+      case handshaked @ Handshaked(_, _, _, MyState(_, requests), _, _, _) =>
+        val blockRequest = BlockRequest(pieceIndex, offSet, block.size.toInt)
+        requests.get(blockRequest) match {
+          case Some(PeerImpl.State.BlockState.Sent(channel)) =>
+            val newState = handshaked.received(blockRequest)
+            if (!state.compareAndSet(currentState, newState)) receivedBlock(pieceIndex, offSet, block)
+            else channel.trySuccess(block) // todo: Check if usage of try-complete is appropriate
+          case Some(PeerImpl.State.BlockState.Received) => logger.warn("Weird....")
+          case None =>
+            logger.warn(s"Received unregistered block for piece $pieceIndex. Offset: $offSet, length: ${block.length}")
         }
-      case goodState: Good =>
-        val error = TerminalError(goodState, msg)
-        if (!state.compareAndSet(currentState, error)) setError(msg)
-        else {
-          logger.info(s"Error '$msg' encountered. Closing connection")
-          socket.close()
-        }
-      case _: TerminalError => ()
+      case state => logger.warn(s"Received block for piece $pieceIndex, but state is '$state'.")
     }
   }
 
-  override def disconnect(): Unit = {
-    logger.info("Disconnecting.")
-    setError(IDisconnected)
+  private object HandlerImpl extends PeerImpl.Handler {
+    override def getState: State = state.get()
+    override def message(msg: PeerImpl.Message): Unit = msg match {
+      case Message.Error(exception) => internalShutdown(exception)
+      case Message.ReceivedHandshake(handshaked) => receiveHandshake(handshaked)
+      case Message.Choke => peerChoked()
+      case Message.UnChoke => peerUnChoked()
+      case Message.Interested => updateHandShakedState(_.peerInterested)
+      case Message.Uninterested => updateHandShakedState(_.peerNotInterested)
+      case Message.HasPiece(idx) => peerHasPiece(idx)
+      case Message.HasPieces(idx) => idx.zipWithIndex.foreach { case (hasPiece, i) => if (hasPiece) peerHasPiece(i) }
+      case i @ Message.Request(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
+      case Message.Piece(idx, offset, data) => receivedBlock(idx, offset, data)
+      case i @ Message.Cancel(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
+      case Message.MessageTypeUnknown(msgType) =>
+        internalShutdown(new RuntimeException(s"Received message of unknown type: $msgType"))
+      case Message.KeepAlive => logger.info("Received keep-alive.")
+    }
+
+    @tailrec
+    private def receiveHandshake(handshaked: State.Handshaked): Unit = {
+      val currentState = state.get()
+      currentState match {
+        case Unconnected(_, channel) =>
+          if (!state.compareAndSet(currentState, handshaked)) receiveHandshake(handshaked)
+          else {
+            Try(scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)) match {
+              case Failure(exception) =>
+                val msg = s"Scheduling keep alive messages failed. Have you shutdown the scheduler?"
+                internalShutdown(new RuntimeException(msg, exception))
+              case Success(keepAliveTask) =>
+                registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]]) match {
+                  case Failure(exception) =>
+                    keepAliveTask.cancel(true)
+                    internalShutdown(exception.asInstanceOf[Exception])
+                  case Success(_) => channel.trySuccess(())
+                }
+            }
+          }
+        case i =>
+          internalShutdown(
+            new RuntimeException(s"Impossible state transition. Received '$handshaked', when state is $i")
+          )
+      }
+    }
+
+    private def registerKeepAliveTask(keepAliveTask: ScheduledFuture[Unit]): Try[Unit] = {
+      val currentState = state.get()
+      currentState match {
+        case handshaked: State.Handshaked =>
+          if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
+            registerKeepAliveTask(keepAliveTask)
+          else Success(())
+        case state => Failure(new RuntimeException(s"Tried to register keep-alive, but state is '$state'"))
+      }
+    }
+
+    private def updateHandShakedState(f: Handshaked => Handshaked): Unit = {
+      val currentState = state.get()
+      currentState match {
+        case hand: State.Handshaked => if (!state.compareAndSet(currentState, hand)) updateHandShakedState(f)
+        case otherState => logger.warn(s"Updating handshaked state, but current state is $otherState.")
+      }
+    }
+    private def peerUnChoked(): Unit = {
+      updateHandShakedState(_.unShokePeer)
+      state.get() match {
+        case handshaked: State.Handshaked => handshaked.subscriber.unChocked()
+        case otherState => logger.warn(s"Unchoking, but state is '$otherState'.")
+      }
+    }
+
+    private def peerChoked(): Unit = {
+      updateHandShakedState(_.chokePeer)
+      state.get() match {
+        case handshaked: State.Handshaked => handshaked.subscriber.chocked()
+        case otherState => logger.warn(s"Choking, but state is '$otherState'.")
+      }
+    }
+
+    private def peerHasPiece(idx: Int): Unit = {
+      updateHandShakedState(_.pierHasPiece(idx))
+      state.get() match {
+        case handshaked: State.Handshaked => handshaked.subscriber.hasPiece(idx)
+        case otherState => logger.warn("")
+      }
+    }
   }
 
 }
 
 object PeerImpl {
 
+  private[peerprotocol] trait Handler {
+    def getState: State
+    def message(msg: Message): Unit
+  }
+
+  sealed trait Message
+
+  object Message {
+    def error(msg: String): Error = Error(new Exception(msg))
+    case class Error(exception: Exception) extends Message
+    case class ReceivedHandshake(handshaked: Handshaked) extends Message
+    case object Choke extends Message
+    case object UnChoke extends Message
+    case object Interested extends Message
+    case object Uninterested extends Message
+    case class HasPiece(idx: Int) extends Message
+    case class HasPieces(idx: List[Boolean]) extends Message
+    case class Request(idx: Int, offset: Int, len: Int) extends Message
+    case class Piece(idx: Int, offset: Int, data: ByteVector) extends Message
+    case class Cancel(idx: Int, offset: Int, len: Int) extends Message
+    case class MessageTypeUnknown(msgType: Int) extends Message
+
+    case object KeepAlive extends Message
+  }
+
   case class Config(tcpConnectTimeoutMillis: Int, myPeerId: PeerId)
+
+  sealed trait State
+
+  object State {
+
+    case object Unsubscribed extends State
+
+    case class Unconnected(subscriber: Peer.Subscriber, channel: Promise[Unit]) extends State
+
+    case object Closed extends State
+
+    case class Handshaked(
+        reservedBytes: Long,
+        peerId: String,
+        protocol: String,
+        me: MyState,
+        peer: PeerState,
+        keepAliveTasks: Option[ScheduledFuture[Unit]],
+        subscriber: Subscriber
+    ) extends State {
+      def chokeMe: Handshaked = copy(me = me.choke)
+      def chokePeer: Handshaked = copy(peer = peer.choke)
+      def unShokeMe: Handshaked = copy(me = me.unChoke)
+      def unShokePeer: Handshaked = copy(peer = peer.unChoke)
+      def meInterested: Handshaked = copy(me = me.interested)
+      def peerInterested: Handshaked = copy(peer = peer.interested)
+      def meNotIntested: Handshaked = copy(me = me.notInterested)
+      def peerNotInterested: Handshaked = copy(peer = peer.notInterested)
+
+      def peerPieces(bitField: List[Boolean]): Handshaked = copy(peer = peer.hasPieces(bitField))
+
+      def pierHasPiece(index: Int): Handshaked = copy(peer = peer.hasPiece(index))
+
+      def download(block: BlockRequest, channel: Promise[ByteVector]): Handshaked =
+        copy(me =
+          MyState(
+            connectionState = me.connectionState.copy(isInterested = true),
+            requests = me.requests + (block -> State.BlockState.Sent(channel))
+          )
+        )
+
+      def received(blockRequest: BlockRequest): Handshaked =
+        copy(me = me.copy(requests = me.requests + (blockRequest -> State.BlockState.Received)))
+
+      def registerKeepAliveTaskHandler(task: ScheduledFuture[Unit]): Handshaked =
+        copy(keepAliveTasks = Some(task))
+    }
+
+    case class MyState(connectionState: ConnectionState, requests: Map[BlockRequest, BlockState]) {
+      def choke: MyState = copy(connectionState = connectionState.choke)
+      def unChoke: MyState = copy(connectionState = connectionState.unChoke)
+      def interested: MyState = copy(connectionState = connectionState.interested)
+      def notInterested: MyState = copy(connectionState = connectionState.notInterested)
+    }
+
+    case class PeerState(connectionState: ConnectionState, piecesBitField: BitVector) {
+      def choke: PeerState = copy(connectionState = connectionState.choke)
+      def unChoke: PeerState = copy(connectionState = connectionState.unChoke)
+      def interested: PeerState = copy(connectionState = connectionState.interested)
+      def notInterested: PeerState = copy(connectionState = connectionState.notInterested)
+      def hasPiece(index: Int): PeerState = copy(piecesBitField = piecesBitField.set(index))
+      def hasPieces(indexes: List[Boolean]): PeerState = copy(piecesBitField = BitVector.bits(indexes))
+    }
+
+    sealed trait BlockState
+
+    object BlockState {
+      case class Sent(channel: Promise[ByteVector]) extends BlockState
+      case object Received extends BlockState
+    }
+
+    case class ConnectionState(isChocked: Boolean, isInterested: Boolean) {
+      def choke = copy(isChocked = true)
+      def unChoke = copy(isChocked = false)
+      def interested = copy(isInterested = true)
+      def notInterested = copy(isInterested = false)
+    }
+
+  }
 
   def apply(
       peerSocket: InetSocketAddress,
@@ -247,7 +381,7 @@ object PeerImpl {
       peerSocket,
       config,
       infoHash,
-      new AtomicReference[State](State.begin),
+      new AtomicReference[State](State.Unsubscribed),
       peersThreadPool,
       scheduledExecutorService,
       numberOfPieces
