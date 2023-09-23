@@ -3,22 +3,21 @@ package com.cmhteixeira.cmhtorrent
 import com.cmhteixeira.bittorrent.PeerId
 import com.cmhteixeira.bittorrent.client.{CmhClientImpl, SwarmFactoryImpl}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl
-import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImpl, TrackerImplWithJava}
+import com.cmhteixeira.bittorrent.tracker.{RandomTransactionIdGenerator, TrackerImplWithJava}
 import com.cmhteixeira.bittorrent2.tracker.TrackerJavaImpl
 
 import java.nio.file.Paths
 import java.security.SecureRandom
 import java.time.Duration
-import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory}
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContext.global
-import scala.concurrent.duration.DurationInt
 import scala.language.postfixOps
 
 object cmhTorrentCli extends App {
   private val peerId = PeerId("cmh-4234567891011121").getOrElse(throw new IllegalArgumentException("Peer id is bad."))
-  private val cmhTorrentDir = Paths.get("/home/cmhteixeira/.cmhTorrent")
+  private val cmhTorrentDir = Paths.get(System.getProperty("user.home"), ".cmhTorrent")
 
   private def scheduler(prefix: String, numThreads: Int): ScheduledExecutorService =
     Executors.newScheduledThreadPool(
