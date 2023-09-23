@@ -2,7 +2,6 @@ package com.cmhteixeira.bittorrent2.tracker;
 
 import java.util.List;
 
-
 public class TestMutableInsideAtomic {
 
   public static void main(String[] args) throws InterruptedException {

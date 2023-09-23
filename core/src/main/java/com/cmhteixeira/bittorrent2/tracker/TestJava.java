@@ -1,7 +1,6 @@
 package com.cmhteixeira.bittorrent2.tracker;
 
 import com.google.common.collect.*;
-
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
