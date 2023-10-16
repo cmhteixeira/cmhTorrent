@@ -25,7 +25,8 @@ final class PeerImpl private (
     peersThreadPool: ExecutionContext,
     scheduler: ScheduledExecutorService,
     numberOfPieces: Int
-) extends Peer {
+) extends Peer
+    with PeerImpl.Handler {
 
   private val logger: Logger = LoggerFactory.getLogger("Peer." + s"${peerSocket.getHostString}:${peerSocket.getPort}")
 
@@ -44,7 +45,7 @@ final class PeerImpl private (
     () =>
       (for {
         _ <- Try(socket.connect(peerSocket, config.tcpConnectTimeoutMillis))
-        _ = peersThreadPool.execute(ReadThread(socket, HandlerImpl, infoHash, peerSocket, numberOfPieces))
+        _ = peersThreadPool.execute(ReadThread(socket, this, infoHash, peerSocket, numberOfPieces))
         _ <- Try(socket.getOutputStream.write(PeerMessages.Handshake(infoHash, config.myPeerId).serialize))
       } yield ()) match {
         case Failure(exception) =>
@@ -169,92 +170,91 @@ final class PeerImpl private (
     }
   }
 
-  private object HandlerImpl extends PeerImpl.Handler {
-    override def getState: State = state.get()
-    override def message(msg: PeerImpl.Message): Unit = msg match {
-      case Message.Error(exception) => internalShutdown(exception)
-      case Message.ReceivedHandshake(handshaked) => receiveHandshake(handshaked)
-      case Message.Choke => peerChoked()
-      case Message.UnChoke => peerUnChoked()
-      case Message.Interested => updateHandShakedState(_.peerInterested)
-      case Message.Uninterested => updateHandShakedState(_.peerNotInterested)
-      case Message.HasPiece(idx) => peerHasPiece(idx)
-      case Message.HasPieces(idx) => idx.zipWithIndex.foreach { case (hasPiece, i) => if (hasPiece) peerHasPiece(i) }
-      case i @ Message.Request(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
-      case Message.Piece(idx, offset, data) => receivedBlock(idx, offset, data)
-      case i @ Message.Cancel(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
-      case Message.MessageTypeUnknown(msgType) =>
-        internalShutdown(new RuntimeException(s"Received message of unknown type: $msgType"))
-      case Message.KeepAlive => logger.info("Received keep-alive.")
-    }
+  override def getState: State = state.get()
 
-    @tailrec
-    private def receiveHandshake(handshaked: State.Handshaked): Unit = {
-      val currentState = state.get()
-      currentState match {
-        case Unconnected(_, channel) =>
-          if (!state.compareAndSet(currentState, handshaked)) receiveHandshake(handshaked)
-          else {
-            Try(scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)) match {
-              case Failure(exception) =>
-                val msg = s"Scheduling keep alive messages failed. Have you shutdown the scheduler?"
-                internalShutdown(new RuntimeException(msg, exception))
-              case Success(keepAliveTask) =>
-                registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]]) match {
-                  case Failure(exception) =>
-                    keepAliveTask.cancel(true)
-                    internalShutdown(exception.asInstanceOf[Exception])
-                  case Success(_) => channel.trySuccess(())
-                }
-            }
+  override def message(msg: PeerImpl.Message): Unit = msg match {
+    case Message.Error(exception) => internalShutdown(exception)
+    case Message.ReceivedHandshake(handshaked) => receiveHandshake(handshaked)
+    case Message.Choke => peerChoked()
+    case Message.UnChoke => peerUnChoked()
+    case Message.Interested => updateHandShakedState(_.peerInterested)
+    case Message.Uninterested => updateHandShakedState(_.peerNotInterested)
+    case Message.HasPiece(idx) => peerHasPiece(idx)
+    case Message.HasPieces(idx) => idx.zipWithIndex.foreach { case (hasPiece, i) => if (hasPiece) peerHasPiece(i) }
+    case i @ Message.Request(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
+    case Message.Piece(idx, offset, data) => receivedBlock(idx, offset, data)
+    case i @ Message.Cancel(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
+    case Message.MessageTypeUnknown(msgType) =>
+      internalShutdown(new RuntimeException(s"Received message of unknown type: $msgType"))
+    case Message.KeepAlive => logger.info("Received keep-alive.")
+  }
+
+  @tailrec
+  private def receiveHandshake(handshaked: State.Handshaked): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case Unconnected(_, channel) =>
+        if (!state.compareAndSet(currentState, handshaked)) receiveHandshake(handshaked)
+        else {
+          Try(scheduler.scheduleAtFixedRate(sendKeepAlive, 100, 100, TimeUnit.SECONDS)) match {
+            case Failure(exception) =>
+              val msg = s"Scheduling keep alive messages failed. Have you shutdown the scheduler?"
+              internalShutdown(new RuntimeException(msg, exception))
+            case Success(keepAliveTask) =>
+              registerKeepAliveTask(keepAliveTask.asInstanceOf[ScheduledFuture[Unit]]) match {
+                case Failure(exception) =>
+                  keepAliveTask.cancel(true)
+                  internalShutdown(exception.asInstanceOf[Exception])
+                case Success(_) => channel.trySuccess(())
+              }
           }
-        case i =>
-          internalShutdown(
-            new RuntimeException(s"Impossible state transition. Received '$handshaked', when state is $i")
-          )
-      }
+        }
+      case i =>
+        internalShutdown(
+          new RuntimeException(s"Impossible state transition. Received '$handshaked', when state is $i")
+        )
     }
+  }
 
-    private def registerKeepAliveTask(keepAliveTask: ScheduledFuture[Unit]): Try[Unit] = {
-      val currentState = state.get()
-      currentState match {
-        case handshaked: State.Handshaked =>
-          if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
-            registerKeepAliveTask(keepAliveTask)
-          else Success(())
-        case state => Failure(new RuntimeException(s"Tried to register keep-alive, but state is '$state'"))
-      }
+  private def registerKeepAliveTask(keepAliveTask: ScheduledFuture[Unit]): Try[Unit] = {
+    val currentState = state.get()
+    currentState match {
+      case handshaked: State.Handshaked =>
+        if (!state.compareAndSet(currentState, handshaked.registerKeepAliveTaskHandler(keepAliveTask)))
+          registerKeepAliveTask(keepAliveTask)
+        else Success(())
+      case state => Failure(new RuntimeException(s"Tried to register keep-alive, but state is '$state'"))
     }
+  }
 
-    private def updateHandShakedState(f: Handshaked => Handshaked): Unit = {
-      val currentState = state.get()
-      currentState match {
-        case hand: State.Handshaked => if (!state.compareAndSet(currentState, hand)) updateHandShakedState(f)
-        case otherState => logger.warn(s"Updating handshaked state, but current state is $otherState.")
-      }
+  private def updateHandShakedState(f: Handshaked => Handshaked): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case hand: State.Handshaked => if (!state.compareAndSet(currentState, hand)) updateHandShakedState(f)
+      case otherState => logger.warn(s"Updating handshaked state, but current state is $otherState.")
     }
-    private def peerUnChoked(): Unit = {
-      updateHandShakedState(_.unShokePeer)
-      state.get() match {
-        case handshaked: State.Handshaked => handshaked.subscriber.unChocked()
-        case otherState => logger.warn(s"Unchoking, but state is '$otherState'.")
-      }
+  }
+  private def peerUnChoked(): Unit = {
+    updateHandShakedState(_.unShokePeer)
+    state.get() match {
+      case handshaked: State.Handshaked => handshaked.subscriber.unChocked()
+      case otherState => logger.warn(s"Unchoking, but state is '$otherState'.")
     }
+  }
 
-    private def peerChoked(): Unit = {
-      updateHandShakedState(_.chokePeer)
-      state.get() match {
-        case handshaked: State.Handshaked => handshaked.subscriber.chocked()
-        case otherState => logger.warn(s"Choking, but state is '$otherState'.")
-      }
+  private def peerChoked(): Unit = {
+    updateHandShakedState(_.chokePeer)
+    state.get() match {
+      case handshaked: State.Handshaked => handshaked.subscriber.chocked()
+      case otherState => logger.warn(s"Choking, but state is '$otherState'.")
     }
+  }
 
-    private def peerHasPiece(idx: Int): Unit = {
-      updateHandShakedState(_.pierHasPiece(idx))
-      state.get() match {
-        case handshaked: State.Handshaked => handshaked.subscriber.hasPiece(idx)
-        case otherState => logger.warn("")
-      }
+  private def peerHasPiece(idx: Int): Unit = {
+    updateHandShakedState(_.pierHasPiece(idx))
+    state.get() match {
+      case handshaked: State.Handshaked => handshaked.subscriber.hasPiece(idx)
+      case otherState => logger.warn("")
     }
   }
 
