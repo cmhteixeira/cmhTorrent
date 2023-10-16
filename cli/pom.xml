@@ -38,10 +38,6 @@
     </dependency>
 
     <!-- Test -->
-    <dependency>
-      <groupId>org.scalatest</groupId>
-      <artifactId>scalatest_${scala.compat.version}</artifactId>
-    </dependency>
   </dependencies>
 
   <build>

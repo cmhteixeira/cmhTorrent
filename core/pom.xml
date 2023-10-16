@@ -33,10 +33,6 @@
       <artifactId>circe-core_${scala.compat.version}</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.circe</groupId>
-      <artifactId>circe-parser_${scala.compat.version}</artifactId>
-    </dependency>
-    <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
     </dependency>
@@ -48,25 +44,8 @@
       <groupId>org.scodec</groupId>
       <artifactId>scodec-bits_${scala.compat.version}</artifactId>
     </dependency>
-    <dependency>
-      <groupId>com.typesafe.akka</groupId>
-      <artifactId>akka-actor_${scala.compat.version}</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.google.guava</groupId>
-      <artifactId>guava</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.javatuples</groupId>
-      <artifactId>javatuples</artifactId>
-    </dependency>
 
     <!-- Test -->
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <scope>test</scope>
-    </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_${scala.compat.version}</artifactId>

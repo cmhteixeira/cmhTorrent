@@ -24,15 +24,10 @@
     <!--    todo: seems ot be correct one.-->
     <scala.version>2.13.10</scala.version>
     <scala.compat.version>2.13</scala.compat.version>
-    <spec2.version>4.2.0</spec2.version>
     <scala.test.version>3.2.15</scala.test.version>
     <circe.version>0.14.1</circe.version>
-    <akka.actor.version>2.6.5</akka.actor.version>
     <scodec.version>1.1.22</scodec.version>
     <jline.version>3.22.0</jline.version>
-    <junit.version>4.12</junit.version>
-    <google.guava.version>31.1-jre</google.guava.version>
-    <java.tuples.version>1.2</java.tuples.version>
     <spotless.plugin>2.36.0</spotless.plugin>
     <google.java.formatter>1.17.0</google.java.formatter>
   </properties>
@@ -178,33 +173,12 @@
         <version>${scodec.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.typesafe.akka</groupId>
-        <artifactId>akka-actor_${scala.compat.version}</artifactId>
-        <version>${akka.actor.version}</version>
-      </dependency>
-      <dependency>
         <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
         <version>${jline.version}</version>
       </dependency>
-      <dependency>
-        <groupId>com.google.guava</groupId>
-        <artifactId>guava</artifactId>
-        <version>${google.guava.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.javatuples</groupId>
-        <artifactId>javatuples</artifactId>
-        <version>${java.tuples.version}</version>
-      </dependency>
 
       <!-- Test -->
-      <dependency>
-        <groupId>junit</groupId>
-        <artifactId>junit</artifactId>
-        <version>${junit.version}</version>
-        <scope>test</scope>
-      </dependency>
       <dependency>
         <groupId>org.scalatest</groupId>
         <artifactId>scalatest_${scala.compat.version}</artifactId>
