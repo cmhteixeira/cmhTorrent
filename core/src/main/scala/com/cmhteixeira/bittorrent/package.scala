@@ -9,7 +9,7 @@ import java.security.MessageDigest
 package bittorrent {
   import scodec.bits.ByteVector
 
-  case class PeerId(underlying: String)
+  case class PeerId(underlying: String) extends AnyVal
 
   object PeerId {
 
