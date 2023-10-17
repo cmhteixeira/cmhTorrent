@@ -127,29 +127,29 @@ final class PeerImpl private (
     }
   }
 
-  override def close(): Unit = {
-    logger.info("Shutting down.")
-    state.set(PeerImpl.State.Closed)
-    Try { socket.close() } match {
-      case Failure(exception) => logger.warn("Closing the socket.", exception)
-      case Success(_) => ()
-    }
-  }
+  override def close(): Unit = internalShutdown(new IllegalStateException("Peer was closed from outside."))
 
   override def address: InetSocketAddress = peerSocket
 
   private def internalShutdown(exception: Exception): Unit = {
     val currentState = state.get()
-    logger.warn(s"Internal shut-down. State: $currentState", exception)
+    logger.warn(s"Shutting down. State: $currentState", exception)
+    state.set(PeerImpl.State.Closed)
+    Try { socket.close() } match {
+      case Failure(exception) => logger.warn("Closing the socket.", exception)
+      case Success(_) => ()
+    }
+
     currentState match {
       case State.Closed => ()
       case State.Unsubscribed => ()
       case Unconnected(_, channel) => channel.tryFailure(exception)
       case i: State.Handshaked =>
+        logger.info(s"Shutdown. Unregistering keep alive? ${i.keepAliveTasks.nonEmpty}.")
         i.keepAliveTasks.foreach(_.cancel(true))
+        logger.info(s"Shutdown. Signalling subscriber.")
         i.subscriber.onError(exception)
     }
-    close()
   }
 
   private def receivedBlock(pieceIndex: Int, offSet: Int, block: ByteVector): Unit = {

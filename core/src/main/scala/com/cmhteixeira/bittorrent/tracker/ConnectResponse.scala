@@ -19,10 +19,4 @@ object ConnectResponse {
       case Success(value) => Right(value)
     }
   }
-
-  def deserializeJava(in: Array[Byte]): ConnectResponse =
-    deserialize(in).fold(
-      error => throw new IllegalArgumentException(s"Error deserializing into connect response: '$error'."),
-      identity
-    )
 }

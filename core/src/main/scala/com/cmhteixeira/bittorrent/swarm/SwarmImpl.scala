@@ -1,6 +1,5 @@
 package com.cmhteixeira.bittorrent.swarm
 
-import cats.data.NonEmptySet
 import cats.implicits.{catsStdInstancesForFuture, toTraverseOps}
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
@@ -9,7 +8,6 @@ import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{PeerFactory, maxBlocksAtOnce}
 import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import com.cmhteixeira.cmhtorrent.PieceHash
-import org.reactivestreams.{Subscriber, Subscription}
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
@@ -85,9 +83,9 @@ private[bittorrent] class SwarmImpl private (
     }
   }
 
-  private class TrackerSubscriber extends Subscriber[InetSocketAddress] {
+  private class TrackerSubscriber extends Tracker.Subscriber {
 
-    private def addSubscription(s: Subscription): Unit = {
+    private def addSubscription(s: Tracker.Subscription): Unit = {
       val currentState = state.get()
       currentState match {
         case active @ SwarmImpl.Active(_, _, _, _, None) =>
@@ -95,9 +93,8 @@ private[bittorrent] class SwarmImpl private (
         case _ => ()
       }
     }
-    override def onSubscribe(s: Subscription): Unit = {
+    override def onSubscribe(s: Tracker.Subscription): Unit = {
       addSubscription(s)
-      s.request(Long.MaxValue)
       logger.info(s"Started subscription for tracker for '${torrent.infoHash}'")
     }
 
@@ -125,7 +122,6 @@ private[bittorrent] class SwarmImpl private (
 
     }
     override def onError(t: Throwable): Unit = logger.error("Tracker stopped subscription.", t)
-    override def onComplete(): Unit = logger.error("Tracker completed.")
   }
 
   override def close(): Unit = {
@@ -221,7 +217,7 @@ private[bittorrent] class SwarmImpl private (
           .map { case (bR, _) => (bR, value.head) }
       }
 
-  private def timeout[A](fut: Future[A]): Future[A] = {
+  private def timeout[A](fut: Future[A]): Future[A] = { // TODO: For shutdown, need to take care of this.
     val promise = Promise[A]()
     scheduler.schedule( // todo: Check if usage of try-complete is appropriate
       new Runnable { override def run(): Unit = promise.tryFailure(new TimeoutException("Timeout after 30 seconds.")) },
@@ -304,7 +300,7 @@ object SwarmImpl {
 
   type PeerFactory = InetSocketAddress => Peer
 
-  private val maxBlocksAtOnce = 500
+  private val maxBlocksAtOnce = 1
   case class Configuration(downloadDir: Path, blockSize: Int)
 
   private[swarm] case class PeerState(chocked: Boolean, uploaded: Long, downloaded: Long, pieces: Set[Int])
@@ -322,7 +318,7 @@ object SwarmImpl {
       peersToState: Map[Peer, SwarmImpl.PeerState],
       piecesToPeers: Map[Int, Set[Peer]],
       piecesToState: Map[Int, PieceState],
-      trackerSubscription: Option[Subscription]
+      trackerSubscription: Option[Tracker.Subscription]
   ) extends State {
 
     def peerHasPiece(peer: Peer, idx: Int): Active = {

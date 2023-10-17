@@ -22,6 +22,8 @@
     <maven.compiler.target>17</maven.compiler.target>
 
     <!--    todo: seems ot be correct one.-->
+    <scala-mvn-plugin.version>4.8.1</scala-mvn-plugin.version>
+    <scala-test-mvn-plugin.version>2.2.0</scala-test-mvn-plugin.version>
     <scala.version>2.13.10</scala.version>
     <scala.compat.version>2.13</scala.compat.version>
     <scala.test.version>3.2.15</scala.test.version>
@@ -30,6 +32,9 @@
     <jline.version>3.22.0</jline.version>
     <spotless.plugin>2.36.0</spotless.plugin>
     <google.java.formatter>1.17.0</google.java.formatter>
+    <slf4j.version>2.0.9</slf4j.version>
+    <logback.version>1.4.11</logback.version>
+    <app-assembler.plugin.version>2.1.0</app-assembler.plugin.version>
   </properties>
 
   <build>
@@ -39,12 +44,12 @@
           <!-- see http://davidb.github.com/scala-maven-plugin -->
           <groupId>net.alchim31.maven</groupId>
           <artifactId>scala-maven-plugin</artifactId>
-          <version>3.3.2</version>
+          <version>${scala-mvn-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.scalatest</groupId>
           <artifactId>scalatest-maven-plugin</artifactId>
-          <version>2.0.0</version>
+          <version>${scala-test-mvn-plugin.version}</version>
           <executions>
             <execution>
               <id>test</id>
@@ -108,7 +113,7 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>appassembler-maven-plugin</artifactId>
-          <version>2.1.0</version>
+          <version>${app-assembler.plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>com.diffplug.spotless</groupId>
@@ -143,11 +148,6 @@
         <version>${scala.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.reactivestreams</groupId>
-        <artifactId>reactive-streams</artifactId>
-        <version>1.0.4</version>
-      </dependency>
-      <dependency>
         <groupId>io.circe</groupId>
         <artifactId>circe-core_${scala.compat.version}</artifactId>
         <version>${circe.version}</version>
@@ -160,13 +160,13 @@
       <dependency>
         <groupId>ch.qos.logback</groupId>
         <artifactId>logback-classic</artifactId>
-        <version>1.4.11</version>
+        <version>${logback.version}</version>
         <scope>runtime</scope>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
-        <version>2.0.9</version>
+        <version>${slf4j.version}</version>
       </dependency>
       <dependency> <!--TODO: Only to print hex-string representation of sha-1 output. Consider another way-->
         <groupId>commons-codec</groupId>

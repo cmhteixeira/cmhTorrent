@@ -1,11 +1,9 @@
 package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent}
+import com.cmhteixeira.bittorrent.swarm.Torrent
 import com.cmhteixeira.bittorrent.tracker.Tracker
-import com.cmhteixeira.bittorrent.tracker.Tracker.TrackerState
 
-import java.net.InetSocketAddress
 import java.nio.file.Path
 import scala.concurrent.Future
 

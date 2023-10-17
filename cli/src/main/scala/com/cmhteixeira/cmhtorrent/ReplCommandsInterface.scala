@@ -194,7 +194,7 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val args = collectionAsScalaIterable(opt.args()).toList
     val downloadDir = opt.get("dir") match {
       case "" => None
-      case a => Some(a)
+      case nonEmpty => Some(obtainPath(nonEmpty))
     }
 
     args match {
@@ -210,7 +210,7 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
             .map { torrentPath =>
               torrentPath -> torrentClient.downloadTorrent(
                 torrentPath,
-                downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
+                downloadDir.getOrElse(defaultDownloadDir.resolve("pieces"))
               )
             }
           val failed = allTorrentResults.collect { case (path, Left(_)) => path }
@@ -228,10 +228,10 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       case a => Paths.get(a)
     }
 
-  private def downloadSingleTorrent(torrentPath: Path, downloadDir: Option[String]): Unit =
+  private def downloadSingleTorrent(torrentPath: Path, downloadDir: Option[Path]): Unit =
     torrentClient.downloadTorrent(
       torrentPath,
-      downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
+      downloadDir.getOrElse(defaultDownloadDir.resolve("pieces"))
     ) match {
       case Left(CmhClient.FileDoesNotExist) =>
         terminal().writer().println(s"The torrent file you provided ($torrentPath) does not exist.")

@@ -1,17 +1,31 @@
 package com.cmhteixeira.bittorrent.tracker
 
 import com.cmhteixeira.bittorrent.InfoHash
-import org.reactivestreams.Publisher
 
 import java.net.InetSocketAddress
 
 trait Tracker {
   def statistics: Map[InfoHash, Tracker.Statistics]
 
-  def submit(torrent: Torrent): Publisher[InetSocketAddress]
+  def submit(torrent: Torrent): Tracker.Publisher
 }
 
 object Tracker {
+
+  trait Publisher {
+    def subscribe(s: Subscriber): Unit
+  }
+
+  trait Subscriber {
+    def onSubscribe(s: Subscription): Unit
+    def onNext(peer: InetSocketAddress): Unit
+
+    def onError(e: Throwable): Unit
+  }
+
+  trait Subscription {
+    def cancel(): Unit
+  }
 
   case class Statistics(summary: Summary, trackers: Map[InetSocketAddress, TrackerState]) {
 
