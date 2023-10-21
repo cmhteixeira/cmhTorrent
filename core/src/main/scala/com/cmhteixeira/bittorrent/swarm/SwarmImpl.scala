@@ -20,7 +20,7 @@ import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
 import scala.util.{Failure, Success}
 
-private[bittorrent] class SwarmImpl private (
+private class SwarmImpl private (
     state: AtomicReference[SwarmImpl.State],
     torrent: Torrent,
     tracker: Tracker,
@@ -493,7 +493,7 @@ object SwarmImpl {
       downloadDir: Path,
       blockSize: Int,
       torrent: Torrent
-  ): SwarmImpl = {
+  ): Swarm = {
     val writerThread = WriterThread(downloadDir, mainExecutor)
 
     new SwarmImpl(

@@ -1,6 +1,6 @@
 package com.cmhteixeira.bittorrent.client
 
-import com.cmhteixeira.bittorrent.swarm.{SwarmImpl, Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.swarm.{Swarm, SwarmImpl, Torrent => SwarmTorrent}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PeerFactory
 
@@ -14,7 +14,7 @@ class SwarmFactoryImpl private (
     tracker: Tracker
 ) extends SwarmFactory {
 
-  override def newSwarm(torrent: SwarmTorrent, downloadDir: Path, blockSize: Int): SwarmImpl =
+  override def newSwarm(torrent: SwarmTorrent, downloadDir: Path, blockSize: Int): Swarm =
     SwarmImpl(
       torrent = torrent,
       blockSize = blockSize,

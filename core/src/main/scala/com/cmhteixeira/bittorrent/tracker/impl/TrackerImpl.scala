@@ -131,37 +131,43 @@ private final class TrackerImpl private (
     override def subscribe(s: Tracker.Subscriber): Unit = thisTracker.subscribe(torrent, s)
   }
 
-  private class TrackerSubscription(s: Tracker.Subscriber, torrent: Torrent) extends Tracker.Subscription {
-    override def cancel(): Unit = {
-      val currentState = state.get()
-      currentState match {
-        case i @ State.Ready => logger.warn(s"Cancelling subscription for '$torrent' when state is '$i'.")
-        case i: State.Shutdown => logger.warn(s"Cancelling subscription for '$torrent' when state is '$i'.")
-        case active @ State.Active((socket, thread), _, _) =>
-          active.get(torrent.infoHash) match {
-            case Some(state4Torrent @ State4Torrent(currentSubscribers, _)) =>
-              val newSubs = currentSubscribers.filterNot(_ == s)
-              val newState =
-                if (newSubs.nonEmpty) active.update(torrent.infoHash, state4Torrent.setSubscriptions(newSubs))
-                else {
-                  val maybeNewState = active.removeTorrent(torrent.infoHash)
-                  if (maybeNewState.torrentToState.nonEmpty) maybeNewState
-                  else State.Shutdown(Map.empty)
-                }
-              if (!state.compareAndSet(currentState, newState)) cancel()
-              else
-                newState match {
-                  case State.Shutdown(_) => cancelListeningThread(socket, thread)
-                  case _ => ()
-                }
+  private def cancel(torrent: Torrent, s: Tracker.Subscriber): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case i @ State.Ready => logger.warn(s"Cancelling subscription for '$torrent' when state is '$i'.")
+      case i: State.Shutdown => logger.warn(s"Cancelling subscription for '$torrent' when state is '$i'.")
+      case active @ State.Active((socket, thread), scheduledTasks, _) =>
+        active.get(torrent.infoHash) match {
+          case Some(state4Torrent @ State4Torrent(currentSubscribers, _)) =>
+            val newSubs = currentSubscribers.filterNot(_ == s)
+            val newState =
+              if (newSubs.nonEmpty) active.update(torrent.infoHash, state4Torrent.setSubscriptions(newSubs))
+              else {
+                val maybeNewState = active.removeTorrent(torrent.infoHash)
+                if (maybeNewState.torrentToState.nonEmpty) maybeNewState
+                else State.Shutdown(Map.empty)
+              }
+            if (!state.compareAndSet(currentState, newState)) cancel(torrent, s)
+            else
+              newState match {
+                case State.Shutdown(_) => releaseResources(scheduledTasks, socket, thread)
+                case _ => ()
+              }
 
-            case None => logger.warn("TODO")
-          }
-      }
+          case None => logger.warn("TODO")
+        }
     }
   }
 
-  private def cancelListeningThread(socket: DatagramSocket, threadHandle: Thread): Unit = {
+  private class TrackerSubscription(s: Tracker.Subscriber, torrent: Torrent) extends Tracker.Subscription {
+    override def cancel(): Unit = thisTracker.cancel(torrent, s)
+  }
+
+  private def releaseResources(
+      scheduledTasks: Set[ScheduledFuture[_]],
+      socket: DatagramSocket,
+      threadHandle: Thread
+  ): Unit = {
     mainExecutor.execute(() => {
       def loop(): Unit = {
         val currentState = state.get()
@@ -179,11 +185,16 @@ private final class TrackerImpl private (
               }
         }
       }
+
       logger.info(s"Cancelling listener thread: ${threadHandle.getName}")
       socket.close()
       threadHandle.join()
-      loop()
       logger.info("Listener thread cancelled.")
+
+      logger.info(s"Cancelling ${scheduledTasks.size} scheduled tasks.")
+      scheduledTasks.foreach(_.cancel(true))
+
+      loop()
     })
   }
 
@@ -410,13 +421,11 @@ private final class TrackerImpl private (
         if (!state.compareAndSet(active, active.copy(scheduledTasks = scheduledTasks + scheduledTask))) {
           scheduledTask.cancel(true)
           this.after(futValue, delay)
-        } else {
-          promise.future
-        }
+        } else promise.future
     }
   }
 
-  def statistics(peerToState: Map[InetSocketAddress, TrackerState]): Tracker.Statistics =
+  private def statistics(peerToState: Map[InetSocketAddress, TrackerState]): Tracker.Statistics =
     peerToState
       .foldLeft[Tracker.Statistics](TrackerImpl.emptyStatistics) {
         case (stats, (tracker, _: ConnectSent)) => stats.addConnectSent(tracker)
@@ -465,8 +474,6 @@ object TrackerImpl {
       def apply(infoHash: InfoHash): State4Torrent = torrentToState(infoHash)
       def get(infoHash: InfoHash): Option[State4Torrent] = torrentToState.get(infoHash)
 
-      def contains(infoHash: InfoHash): Boolean = torrentToState.contains(infoHash)
-
       def update(torrent: InfoHash, state4Torrent: State4Torrent): Active =
         copy(torrentToState = torrentToState + (torrent -> state4Torrent))
 
@@ -490,10 +497,6 @@ object TrackerImpl {
 
     def setSubscriptions(subscriptions: Set[Tracker.Subscriber]): State4Torrent =
       State4Torrent(subscriptions, trackerToState)
-  }
-
-  private object State4Torrent {
-    def empty: State4Torrent = State4Torrent(Set.empty, Map.empty)
   }
 
   sealed trait TrackerState
