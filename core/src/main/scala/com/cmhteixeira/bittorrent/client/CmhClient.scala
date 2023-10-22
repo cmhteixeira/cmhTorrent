@@ -1,20 +1,15 @@
 package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent}
+import com.cmhteixeira.bittorrent.swarm.Torrent
 import com.cmhteixeira.bittorrent.tracker.Tracker
-import com.cmhteixeira.bittorrent.tracker.Tracker.TrackerState
 
-import java.net.InetSocketAddress
 import java.nio.file.Path
 import scala.concurrent.Future
 
-trait CmhClient {
+trait CmhClient extends AutoCloseable {
   def downloadTorrent(t: Torrent, p: Path): Future[Path]
   def downloadTorrent(t: Path, p: Path): Either[CmhClient.SubmissionError, Future[Path]]
-  def piecesStatus(infoHash: InfoHash): Any
-  def peerStatus(infoHash: InfoHash): Option[Map[InetSocketAddress, Swarm.PeerState]]
-
   def statistics: Map[CmhClient.Torrent, Tracker.Statistics]
 
   def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails]
@@ -22,7 +17,8 @@ trait CmhClient {
   def stop(t: InfoHash): Boolean
   def delete(t: InfoHash): Boolean
 
-  def stopAll: Unit
+  override def close(): Unit
+
 }
 
 object CmhClient {
@@ -39,9 +35,10 @@ object CmhClient {
   case class TorrentDetails(
       piecesDownloaded: Int,
       piecesTotal: Int,
-      peersOn: Int,
-      peersConnectedNotActive: Int,
-      peersTotal: Int
+      peersTotal: Int,
+      peersConnected: Int,
+      peersUnChocked: Int,
+      peersUnChokedWithPieces: Int
   )
 
   sealed trait SubmissionError

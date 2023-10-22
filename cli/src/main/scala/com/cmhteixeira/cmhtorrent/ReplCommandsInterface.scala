@@ -1,22 +1,17 @@
 package com.cmhteixeira.cmhtorrent
 
-import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.client.CmhClient
 import com.cmhteixeira.bittorrent.tracker.Tracker
-import org.jline.builtins.Completers.OptionCompleter
+import org.jline.builtins.Completers.FileNameCompleter
 import org.jline.builtins.{Options, SyntaxHighlighter}
 import org.jline.console.impl.{DefaultPrinter, JlineCommandRegistry}
 import org.jline.console.{CommandInput, CommandMethods, CommandRegistry, Printer}
 import org.jline.reader.{Completer, LineReader}
-import org.jline.reader.impl.completer.{ArgumentCompleter, NullCompleter, StringsCompleter}
 import org.jline.terminal.Terminal
-import org.jline.utils.{AttributedString, AttributedStyle}
 import org.slf4j.LoggerFactory
 
 import java.nio.file.{Files, Path, Paths}
-import scala.collection.JavaConverters.mapAsJavaMap
-import scala.collection.JavaConverters.seqAsJavaList
-import scala.collection.JavaConverters.collectionAsScalaIterable
+import scala.collection.JavaConverters.{collectionAsScalaIterable, mapAsJavaMap, seqAsJavaList}
 import scala.util.{Failure, Success, Try}
 
 class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDir: Path, printer: Printer)
@@ -27,24 +22,20 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
   var reader: LineReader = null
   val syntaxHighlighter = SyntaxHighlighter.build("asd")
 
-  foo()
+  registerCommands(mapAsJavaMap(commandsToExecute))
 
-  def foo() = {
-    val commandExecute: Map[String, CommandMethods] = Map(
-      "download" -> new CommandMethods(a => tDownloadExecute(a), a => tdownloadCompleter(a)),
-      "list" -> new CommandMethods(a => listExecute(a), a => defaultCompleter(a)),
-      "details" -> new CommandMethods(a => detailsExecute(a), a => defaultCompleter(a)),
-      "peers" -> new CommandMethods(a => peersExecute(a), a => defaultCompleter(a)),
-      "stats" -> new CommandMethods(a => stats(a), a => defaultCompleter(a))
-//      "tput" -> new CommandMethods(this::tput, this::tputCompleter),
-//    "testkey" -> new CommandMethods(this::testkey, this::defaultCompleter),
-//    "clear" -> new CommandMethods(this::clear, this::defaultCompleter),
-//    "echo" -> new CommandMethods(this::echo, this::defaultCompleter),
-//    "!" -> new CommandMethods(this::shell, this::defaultCompleter)
-    )
-    registerCommands(mapAsJavaMap(commandExecute))
-  }
-
+  private def commandsToExecute: Map[String, CommandMethods] = Map(
+    "download" -> new CommandMethods(a => tDownloadExecute(a), a => tdownloadCompleter(a)),
+    "list" -> new CommandMethods(a => listExecute(a), a => defaultCompleter(a)),
+    "details" -> new CommandMethods(a => detailsExecute(a), a => defaultCompleter(a)),
+    "peers" -> new CommandMethods(a => peersExecute(a), a => defaultCompleter(a)),
+    "stats" -> new CommandMethods(a => stats(a), a => defaultCompleter(a))
+    //      "tput" -> new CommandMethods(this::tput, this::tputCompleter),
+    //    "testkey" -> new CommandMethods(this::testkey, this::defaultCompleter),
+    //    "clear" -> new CommandMethods(this::clear, this::defaultCompleter),
+    //    "echo" -> new CommandMethods(this::echo, this::defaultCompleter),
+    //    "!" -> new CommandMethods(this::shell, this::defaultCompleter)
+  )
   private def listExecute(input: CommandInput): Unit = {
     val usage: Array[String] =
       Array(
@@ -108,7 +99,9 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val torrentDetails = torrentClient.listTorrents
     val options = mapAsJavaMap(
       Map(
-        Printer.COLUMNS -> seqAsJavaList(List("name", "piecesDownloaded", "peersOn", "peersInactive"))
+        Printer.COLUMNS -> seqAsJavaList(
+          List("name", "piecesDownloaded", "peersConnected", "peersUnChoked", "peersReady")
+        )
 //        Printer.SHORT_NAMES -> true
       )
     ): java.util.Map[String, AnyRef]
@@ -117,14 +110,15 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       case (
             CmhClient.Torrent(_, name),
             CmhClient
-              .TorrentDetails(piecesDownloaded, piecesTotal, peersOn, peersConnectedNotActive, peersTotal)
+              .TorrentDetails(piecesDownloaded, piecesTotal, peersTotal, peersConnected, peersUnchoked, peersReady)
           ) =>
         mapAsJavaMap(
           Map(
             "name" -> name,
             "piecesDownloaded" -> s"$piecesDownloaded/$piecesTotal",
-            "peersOn" -> s"$peersOn/$peersTotal",
-            "peersInactive" -> s"$peersConnectedNotActive/$peersTotal"
+            "peersConnected" -> s"$peersConnected/$peersTotal",
+            "peersUnChoked" -> s"$peersUnchoked/$peersConnected",
+            "peersReady" -> s"$peersReady/$peersConnected"
           )
         ): java.util.Map[String, AnyRef]
     })
@@ -200,13 +194,13 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     val args = collectionAsScalaIterable(opt.args()).toList
     val downloadDir = opt.get("dir") match {
       case "" => None
-      case a => Some(a)
+      case nonEmpty => Some(obtainPath(nonEmpty))
     }
 
     args match {
       case Nil => terminal().writer().println("You must provide the path to the torrent file.")
       case head :: Nil =>
-        val torrentPath = Paths.get(head)
+        val torrentPath = obtainPath(head)
         val isDir = Files.isDirectory(torrentPath)
         if (isDir) {
           val allTorrentResults = torrentPath.toFile
@@ -216,37 +210,38 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
             .map { torrentPath =>
               torrentPath -> torrentClient.downloadTorrent(
                 torrentPath,
-                downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
+                downloadDir.getOrElse(defaultDownloadDir.resolve("pieces"))
               )
             }
           val failed = allTorrentResults.collect { case (path, Left(_)) => path }
           if (failed.nonEmpty)
             failed.foreach(path => terminal().writer().println(s"Error submitting torrent $path."))
-        } else
-          torrentClient.downloadTorrent(
-            torrentPath,
-            downloadDir.fold(defaultDownloadDir.resolve("pieces"))(Paths.get(_))
-          ) match {
-            case Left(CmhClient.FileDoesNotExist) =>
-              terminal().writer().println(s"The torrent file you provided ($head) does not exist.")
-            case Left(CmhClient.ParsingError(error)) =>
-              terminal().writer().println(s"There was an issue parsing the file you provided ($head): '$error'")
-            case Right(_) => ()
-          }
+        } else downloadSingleTorrent(torrentPath, downloadDir)
+
       case other => terminal().writer().println("You can only provide 1 torrent file at a time.")
     }
   }
 
-  private def tdownloadCompleter(command: String): java.util.List[Completer] = {
-    seqAsJavaList(
-      List(
-        new ArgumentCompleter(
-          NullCompleter.INSTANCE,
-          new OptionCompleter(new StringsCompleter("foo"), a => commandOptions(a), 1)
-        )
-      )
-    )
-  }
+  private def obtainPath(i: String): Path =
+    i match {
+      case s"~$rest" => Paths.get(System.getProperty("user.home"), rest)
+      case a => Paths.get(a)
+    }
+
+  private def downloadSingleTorrent(torrentPath: Path, downloadDir: Option[Path]): Unit =
+    torrentClient.downloadTorrent(
+      torrentPath,
+      downloadDir.getOrElse(defaultDownloadDir.resolve("pieces"))
+    ) match {
+      case Left(CmhClient.FileDoesNotExist) =>
+        terminal().writer().println(s"The torrent file you provided ($torrentPath) does not exist.")
+      case Left(CmhClient.ParsingError(error)) =>
+        terminal().writer().println(s"There was an issue parsing the file you provided ($torrentPath): '$error'")
+      case Right(_) => ()
+    }
+
+  private def tdownloadCompleter(command: String): java.util.List[Completer] =
+    seqAsJavaList(List(new FileNameCompleter()))
 
   def setLineReader(theReader: LineReader): Unit =
     reader = theReader

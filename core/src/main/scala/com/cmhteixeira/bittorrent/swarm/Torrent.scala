@@ -1,7 +1,8 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket, parseToUdpSocketAddress}
+import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket}
+import com.cmhteixeira.bittorrent.UdpSocket.parseToUdpSocketAddress
 import cats.implicits.{catsSyntaxTuple3Semigroupal, toTraverseOps}
 import com.cmhteixeira.bittorrent.swarm.Torrent.split
 import com.cmhteixeira.cmhtorrent

@@ -2,7 +2,8 @@ package com.cmhteixeira.bittorrent.tracker
 
 import cats.data.NonEmptyList
 import cats.implicits.catsSyntaxTuple2Semigroupal
-import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket, parseToUdpSocketAddress}
+import com.cmhteixeira.bittorrent.UdpSocket.parseToUdpSocketAddress
+import com.cmhteixeira.bittorrent.{InfoHash, UdpSocket}
 
 case class Torrent(
     infoHash: InfoHash,

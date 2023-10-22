@@ -2,8 +2,9 @@ package com.cmhteixeira.bittorrent.tracker
 
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
 import com.cmhteixeira.bittorrent.tracker.AnnounceRequest.{Announce, Event}
-import sun.nio.cs.UTF_8
+
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 private[tracker] case class AnnounceRequest(
     connectionId: Long,
@@ -29,15 +30,15 @@ private[tracker] case class AnnounceRequest(
     })
     bytes.putInt(transactionId)
     bytes.put(infoHash.bytes)
-    bytes.put(peerId.underlying.getBytes(new UTF_8))
+    bytes.put(peerId.underlying.getBytes(StandardCharsets.UTF_8))
     bytes.putLong(downloaded)
     bytes.putLong(left)
     bytes.putLong(uploaded)
     bytes.putInt(event match {
-      case Event.None => 0
-      case Event.Completed => 1
-      case Event.Started => 2
-      case Event.Stop => 3
+      case AnnounceRequest.None => 0
+      case AnnounceRequest.Completed => 1
+      case AnnounceRequest.Started => 2
+      case AnnounceRequest.Stop => 3
     })
     bytes.putInt(ipAddress)
     bytes.putInt(key)
@@ -48,14 +49,12 @@ private[tracker] case class AnnounceRequest(
   }
 }
 
-private[tracker] object AnnounceRequest {
+object AnnounceRequest {
   case object Announce
   sealed trait Event
 
-  object Event {
-    case object None extends Event
-    case object Completed extends Event
-    case object Started extends Event
-    case object Stop extends Event
-  }
+  case object None extends Event
+  case object Completed extends Event
+  case object Started extends Event
+  case object Stop extends Event
 }

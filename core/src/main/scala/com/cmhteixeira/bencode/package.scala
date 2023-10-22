@@ -1,6 +1,5 @@
 package com.cmhteixeira
 
-import sun.nio.cs.US_ASCII
 import com.cmhteixeira.bencode.Bencode._
 import com.cmhteixeira.bencode.ParsingFailure.{
   BadByteString,
@@ -12,6 +11,7 @@ import com.cmhteixeira.bencode.ParsingFailure.{
   DataAfterList
 }
 
+import java.nio.charset.StandardCharsets
 import scala.annotation.tailrec
 
 package object bencode extends Parser with Serializer {
@@ -104,16 +104,16 @@ package object bencode extends Parser with Serializer {
 
   def serialize(b: Bencode): Array[Byte] =
     b match {
-      case BInteger(underlying) => s"i${underlying}e".getBytes(new US_ASCII())
-      case BByteString(underlying) => s"${underlying.length}:".getBytes(new US_ASCII) ++ underlying
+      case BInteger(underlying) => s"i${underlying}e".getBytes(StandardCharsets.US_ASCII)
+      case BByteString(underlying) => s"${underlying.length}:".getBytes(StandardCharsets.US_ASCII) ++ underlying
       case BList(underlying) =>
         val contents = underlying.map(serialize).foldLeft(Array.emptyByteArray)(_ ++ _)
-        "l".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
+        "l".getBytes(StandardCharsets.US_ASCII) ++ contents ++ "e".getBytes(StandardCharsets.US_ASCII)
       case BDictionary(underlying) =>
         // TODO: How to order dictionary keys lexicographically if we don't have the encoding? For now encoding is un-ordered.
-        val contents = underlying.foldLeft(Array.emptyByteArray) {
-          case (a, (b1, b2)) => a ++ serialize(b1) ++ serialize(b2)
+        val contents = underlying.foldLeft(Array.emptyByteArray) { case (a, (b1, b2)) =>
+          a ++ serialize(b1) ++ serialize(b2)
         }
-        "d".getBytes(new US_ASCII) ++ contents ++ "e".getBytes(new US_ASCII)
+        "d".getBytes(StandardCharsets.US_ASCII) ++ contents ++ "e".getBytes(StandardCharsets.US_ASCII)
     }
 }

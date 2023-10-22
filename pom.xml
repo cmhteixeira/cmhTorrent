@@ -10,20 +10,57 @@
   <packaging>pom</packaging>
   <name>parent-project</name>
 
-    <modules>
-        <module>core</module>
-        <module>cli</module>
-    </modules>
+  <modules>
+    <module>core</module>
+    <module>cli</module>
+  </modules>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>1.7</maven.compiler.source>
-    <maven.compiler.target>1.7</maven.compiler.target>
+    <encoding>UTF-8</encoding>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+
+    <!--    todo: seems ot be correct one.-->
+    <scala-mvn-plugin.version>4.8.1</scala-mvn-plugin.version>
+    <scala-test-mvn-plugin.version>2.2.0</scala-test-mvn-plugin.version>
+    <scala.version>2.13.10</scala.version>
+    <scala.compat.version>2.13</scala.compat.version>
+    <scala.test.version>3.2.15</scala.test.version>
+    <circe.version>0.14.1</circe.version>
+    <scodec.version>1.1.22</scodec.version>
+    <jline.version>3.22.0</jline.version>
+    <spotless.plugin>2.36.0</spotless.plugin>
+    <google.java.formatter>1.17.0</google.java.formatter>
+    <slf4j.version>2.0.9</slf4j.version>
+    <logback.version>1.4.11</logback.version>
+    <app-assembler.plugin.version>2.1.0</app-assembler.plugin.version>
   </properties>
 
   <build>
     <pluginManagement><!-- lock down plugins versions to avoid using Maven defaults (may be moved to parent pom) -->
       <plugins>
+        <plugin>
+          <!-- see http://davidb.github.com/scala-maven-plugin -->
+          <groupId>net.alchim31.maven</groupId>
+          <artifactId>scala-maven-plugin</artifactId>
+          <version>${scala-mvn-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.scalatest</groupId>
+          <artifactId>scalatest-maven-plugin</artifactId>
+          <version>${scala-test-mvn-plugin.version}</version>
+          <executions>
+            <execution>
+              <id>test</id>
+              <goals>
+                <goal>test</goal>
+              </goals>
+              <phase>none</phase>
+            </execution>
+          </executions>
+        </plugin>
+
         <!-- clean lifecycle, see https://maven.apache.org/ref/current/maven-core/lifecycles.html#clean_Lifecycle -->
         <plugin>
           <artifactId>maven-clean-plugin</artifactId>
@@ -37,10 +74,20 @@
         <plugin>
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.8.0</version>
+          <configuration>
+            <compilerArgs>
+              <arg>--enable-preview</arg>
+            </compilerArgs>
+<!--            <skip>true</skip>-->
+          </configuration>
         </plugin>
         <plugin>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>2.22.1</version>
+          <configuration>
+            <!-- Tests will be run with scalatest-maven-plugin instead -->
+            <skipTests>true</skipTests>
+          </configuration>
         </plugin>
         <plugin>
           <artifactId>maven-jar-plugin</artifactId>
@@ -66,9 +113,85 @@
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>appassembler-maven-plugin</artifactId>
-          <version>2.1.0</version>
+          <version>${app-assembler.plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>com.diffplug.spotless</groupId>
+          <artifactId>spotless-maven-plugin</artifactId>
+          <version>${spotless.plugin}</version>
+          <configuration>
+            <java>
+              <googleJavaFormat>
+                <version>${google.java.formatter}</version>                      <!-- optional, 1.8 is minimum supported version -->
+                <style>GOOGLE</style>                       <!-- or AOSP (optional) -->
+              </googleJavaFormat>
+            </java>
+          </configuration>
+          <executions>
+            <execution>
+              <goals>
+                <goal>check</goal>
+              </goals>
+              <phase>compile</phase>
+            </execution>
+          </executions>
         </plugin>
       </plugins>
     </pluginManagement>
   </build>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.scala-lang</groupId>
+        <artifactId>scala-library</artifactId>
+        <version>${scala.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.circe</groupId>
+        <artifactId>circe-core_${scala.compat.version}</artifactId>
+        <version>${circe.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.circe</groupId>
+        <artifactId>circe-parser_${scala.compat.version}</artifactId>
+        <version>${circe.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>ch.qos.logback</groupId>
+        <artifactId>logback-classic</artifactId>
+        <version>${logback.version}</version>
+        <scope>runtime</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency> <!--TODO: Only to print hex-string representation of sha-1 output. Consider another way-->
+        <groupId>commons-codec</groupId>
+        <artifactId>commons-codec</artifactId>
+        <version>1.15</version>
+      </dependency>
+      <dependency>
+        <groupId>org.scodec</groupId>
+        <artifactId>scodec-bits_${scala.compat.version}</artifactId>
+        <version>${scodec.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+
+      <!-- Test -->
+      <dependency>
+        <groupId>org.scalatest</groupId>
+        <artifactId>scalatest_${scala.compat.version}</artifactId>
+        <version>${scala.test.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
 </project>

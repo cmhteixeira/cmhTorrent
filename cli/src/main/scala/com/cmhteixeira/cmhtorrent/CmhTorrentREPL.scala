@@ -66,7 +66,7 @@ object CmhTorrentREPL {
 
     val systemRegistry: SystemRegistryImpl =
       new SystemRegistryImpl(parser, terminal, () => workingDir, configPath) {
-        override def close(): Unit = cmhClient.stopAll
+        override def close(): Unit = cmhClient.close()
       }
     systemRegistry
   }

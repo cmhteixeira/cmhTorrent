@@ -1,15 +1,16 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import org.scalatest.{FunSuite, Matchers}
 import com.cmhteixeira.cmhtorrent.{Torrent => OriginalTorrent}
 import com.cmhteixeira.bencode.parse
 import com.cmhteixeira.bencode.{Decoder => BDecoder}
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
 
-class TorrentSpec extends FunSuite with Matchers {
+class TorrentSpec extends AnyFunSuite with Matchers {
   val decoder = implicitly[BDecoder[OriginalTorrent]]
 
   lazy val torrent1 = for {

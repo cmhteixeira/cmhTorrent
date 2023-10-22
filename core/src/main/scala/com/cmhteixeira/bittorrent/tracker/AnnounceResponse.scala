@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.tracker
 
 import cats.Show
+
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.ByteBuffer
 
@@ -70,6 +71,7 @@ private[tracker] object AnnounceResponse {
     if (sizePacket < 20) Left("Received packet had less than 20 bytes. Couldn't possibly be valid Announce response.")
     else if ((sizePacket - 20) % 6 != 0) Left("Received packet bla bla bla")
     else deserializeInternal(in, (sizePacket - 20) / 6)
+
 
   implicit val show: Show[AnnounceResponse] = new Show[AnnounceResponse] {
 
