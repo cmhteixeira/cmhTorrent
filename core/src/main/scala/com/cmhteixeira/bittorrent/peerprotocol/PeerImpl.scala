@@ -5,6 +5,7 @@ import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.{Config, Message, State}
 import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.State.{Handshaked, MyState, Unconnected}
 import com.cmhteixeira.bittorrent.peerprotocol.PeerMessages.Request
+import org.apache.commons.codec.binary.Hex
 import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.{BitVector, ByteVector}
 
@@ -133,7 +134,7 @@ final class PeerImpl private (
 
   private def internalShutdown(exception: Exception): Unit = {
     val currentState = state.get()
-    logger.warn(s"Shutting down. State: $currentState", exception)
+    logger.warn(s"Shutting down. Closing state: $currentState", exception)
     state.set(PeerImpl.State.Closed)
     Try { socket.close() } match {
       case Failure(exception) => logger.warn("Closing the socket.", exception)
@@ -257,6 +258,43 @@ final class PeerImpl private (
       case otherState => logger.warn("")
     }
   }
+  override def piece(idx: Int): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case handshaked @ State.Handshaked(
+            _,
+            _,
+            _,
+            State.MyState(State.ConnectionState(amChocked, _), _),
+            State.PeerState(State.ConnectionState(_, _), _),
+            _,
+            _
+          ) =>
+        if (amChocked) {
+          if (!state.compareAndSet(currentState, handshaked.unShokeMe)) piece(idx)
+          else unChokeMe()
+        }
+        informPiece(idx)
+      case _ => ()
+    }
+  }
+
+  private def unChokeMe(): Unit = { // todo: improve this.
+    logger.info("Informing I am unchoked (So I can send.).")
+    Try(socket.getOutputStream.write(PeerMessages.Unchoke.serialize.toArray)) match {
+      case Failure(exception) => internalShutdown(new Exception("Sending Unchoke.", exception))
+      case Success(_) => logger.info("Informed peer I am unchoked.")
+    }
+  }
+
+  private def informPiece(piece: Int): Unit = {
+    logger.info(s"Informing I have piece $piece")
+    val have = PeerMessages.Have(piece)
+    Try(socket.getOutputStream.write(have.serialize.toArray)) match {
+      case Failure(exception) => internalShutdown(new Exception(s"Sending  $have.", exception))
+      case Success(_) => logger.info(s"Informed peer I have piece $piece")
+    }
+  }
 
 }
 
@@ -295,7 +333,9 @@ object PeerImpl {
 
     case object Unsubscribed extends State
 
-    case class Unconnected(subscriber: Peer.Subscriber, channel: Promise[Unit]) extends State
+    case class Unconnected(subscriber: Peer.Subscriber, channel: Promise[Unit]) extends State {
+      override def toString: String = s"Unconnected[handshakeReceived: ${channel.isCompleted}]"
+    }
 
     case object Closed extends State
 
@@ -334,6 +374,10 @@ object PeerImpl {
 
       def registerKeepAliveTaskHandler(task: ScheduledFuture[Unit]): Handshaked =
         copy(keepAliveTasks = Some(task))
+      override def toString: String = {
+        val decodedPeerId = Try(Hex.decodeHex(peerId)).getOrElse("unknown-id")
+        s"Handshaked[$reservedBytes,$decodedPeerId,$protocol,keepAlive=${keepAliveTasks.nonEmpty},$me,$peer]"
+      }
     }
 
     case class MyState(connectionState: ConnectionState, requests: Map[BlockRequest, BlockState]) {
@@ -341,6 +385,8 @@ object PeerImpl {
       def unChoke: MyState = copy(connectionState = connectionState.unChoke)
       def interested: MyState = copy(connectionState = connectionState.interested)
       def notInterested: MyState = copy(connectionState = connectionState.notInterested)
+
+      override def toString: String = s"MyState[$connectionState, requests=${requests.size}]"
     }
 
     case class PeerState(connectionState: ConnectionState, piecesBitField: BitVector) {
@@ -350,6 +396,7 @@ object PeerImpl {
       def notInterested: PeerState = copy(connectionState = connectionState.notInterested)
       def hasPiece(index: Int): PeerState = copy(piecesBitField = piecesBitField.set(index))
       def hasPieces(indexes: List[Boolean]): PeerState = copy(piecesBitField = BitVector.bits(indexes))
+      override def toString: String = s"PeerState[$connectionState, #Pieces=Unknown]"
     }
 
     sealed trait BlockState
@@ -364,6 +411,7 @@ object PeerImpl {
       def unChoke = copy(isChocked = false)
       def interested = copy(isInterested = true)
       def notInterested = copy(isInterested = false)
+      override def toString: String = s"State[chocked=$isChocked, interested=$isInterested]"
     }
 
   }

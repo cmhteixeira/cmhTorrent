@@ -29,11 +29,12 @@ private class SwarmImpl private (
     fileManager: TorrentFileManager,
     mainExecutor: ExecutionContext,
     peerFactory: PeerFactory
-) extends Swarm {
+) extends Swarm
+    with Tracker.Subscriber {
   private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash.hex.take(6)}")
   tracker
     .submit(torrent.toTrackerTorrent)
-    .subscribe(new TrackerSubscriber)
+    .subscribe(this)
 
   private def removePeer(peer: Peer): Unit = {
     val currentState = state.get()
@@ -83,47 +84,39 @@ private class SwarmImpl private (
     }
   }
 
-  private class TrackerSubscriber extends Tracker.Subscriber {
-
-    private def addSubscription(s: Tracker.Subscription): Unit = {
-      val currentState = state.get()
-      currentState match {
-        case active @ SwarmImpl.Active(_, _, _, _, None) =>
-          if (!state.compareAndSet(currentState, active.copy(trackerSubscription = Some(s)))) addSubscription(s)
-        case _ => ()
-      }
+  override def onSubscribe(s: Tracker.Subscription): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case active @ SwarmImpl.Active(_, _, _, _, None) =>
+        if (!state.compareAndSet(currentState, active.copy(trackerSubscription = Some(s)))) this.onSubscribe(s)
+      case _ => ()
     }
-    override def onSubscribe(s: Tracker.Subscription): Unit = {
-      addSubscription(s)
-      logger.info(s"Started subscription for tracker for '${torrent.infoHash}'")
-    }
-
-    override def onNext(t: InetSocketAddress): Unit = {
-      val currentState = state.get()
-      currentState match {
-        case SwarmImpl.Closed => logger.warn("Trying to add, but swarm is closed.")
-        case active @ SwarmImpl.Active(unconnectedPeers, peersToState, _, _, _) =>
-          implicit val ec = mainExecutor
-          if (unconnectedPeers.contains(t) || peersToState.exists { case (peer, _) => peer.address == t }) ()
-          else {
-            val newPeer = peerFactory(t)
-            if (!state.compareAndSet(currentState, active.addNewPeer(newPeer))) {
-              newPeer.close()
-              onNext(t)
-            } else
-              newPeer.subscribe(new PeerSubscriber(newPeer)) onComplete {
-                case Success(_) => logger.info(s"Added new peer for '$t'.")
-                case Failure(exception) =>
-                  logger.info(s"Subscribing to peer '$t'", exception)
-                  removePeer(newPeer)
-              }
-          }
-      }
-
-    }
-    override def onError(t: Throwable): Unit = logger.error("Tracker stopped subscription.", t)
+    logger.info(s"Started subscription for tracker for '${torrent.infoHash}'")
   }
 
+  override def onNext(t: InetSocketAddress): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case SwarmImpl.Closed => logger.warn("Trying to add, but swarm is closed.")
+      case active @ SwarmImpl.Active(unconnectedPeers, peersToState, _, _, _) =>
+        implicit val ec = mainExecutor
+        if (unconnectedPeers.contains(t) || peersToState.exists { case (peer, _) => peer.address == t }) ()
+        else {
+          val newPeer = peerFactory(t)
+          if (!state.compareAndSet(currentState, active.addNewPeer(newPeer))) {
+            newPeer.close()
+            onNext(t)
+          } else
+            newPeer.subscribe(new PeerSubscriber(newPeer)) onComplete {
+              case Success(_) => logger.info(s"Added new peer for '$t'.")
+              case Failure(exception) =>
+                logger.info(s"Subscribing to peer '$t'", exception)
+                removePeer(newPeer)
+            }
+        }
+    }
+  }
+  override def onError(t: Throwable): Unit = logger.error("Tracker stopped subscription.", t)
   override def close(): Unit = {
     logger.info("Shutting down.")
     state.get() match {
@@ -170,9 +163,10 @@ private class SwarmImpl private (
           }
           _ <- fileChunks.traverse { case FileChunk(path, offset, block) => fileManager.write(path, offset, block) }
           newState4Piece <- setStateToCompleted(blockR)
-          _ <-
+          pieceDownloaded <-
             if (newState4Piece.allBlocksDownloaded) hashCheck(blockR, torrent.info.pieces.toList(blockR.index))
-            else Future.unit
+            else Future.successful(false)
+          _ = if (pieceDownloaded) notifyHave(blockR.index)
           _ <- state.get() match {
             case SwarmImpl.Closed => Future.unit
             case active: SwarmImpl.Active =>
@@ -187,6 +181,13 @@ private class SwarmImpl private (
         }
     }
   }
+
+  def notifyHave(piece: Int): Unit =
+    state.get() match {
+      case SwarmImpl.Closed => logger.info("TODO")
+      case SwarmImpl.Active(_, peersToState, _, _, _) =>
+        peersToState.foreach { case (peer, _) => peer.piece(piece) }
+    }
 
   private def hashCheck(blockR: BlockRequest, hash: PieceHash): Future[Boolean] =
     fileManager.complete(torrent.fileSlices(blockR.index).fold[List[Torrent.FileSlice]](List())(_.toList).map {
@@ -300,7 +301,7 @@ object SwarmImpl {
 
   type PeerFactory = InetSocketAddress => Peer
 
-  private val maxBlocksAtOnce = 1
+  private val maxBlocksAtOnce = 100
   case class Configuration(downloadDir: Path, blockSize: Int)
 
   private[swarm] case class PeerState(chocked: Boolean, uploaded: Long, downloaded: Long, pieces: Set[Int])

@@ -3,10 +3,11 @@ package com.cmhteixeira.bittorrent.peerprotocol
 import com.cmhteixeira.bittorrent.InfoHash
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.Subscriber
 import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.Message
-import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.State.{Closed, _}
+import com.cmhteixeira.bittorrent.peerprotocol.PeerImpl.State._
 import org.apache.commons.codec.binary.Hex
 import org.slf4j.{Logger, LoggerFactory}
 import scodec.bits.{BitVector, ByteVector}
+
 import java.io.InputStream
 import java.net.{InetSocketAddress, Socket}
 import java.nio.ByteBuffer
@@ -45,7 +46,9 @@ private[peerprotocol] class ReadThread private (
 
   private def receiveNonHandshakeMessage(): Message = {
     val msgTypeResponse = socket.getInputStream.readNBytes(4)
-    if (msgTypeResponse.length != 4) Message.error("TODO")
+    val bytesRead = msgTypeResponse.length
+    if (bytesRead != 4)
+      Message.error(s"State handshaked. Tried to read 4 bytes to determine length, but read: $bytesRead")
     else {
       val msgSizeLong = ByteBuffer.allocate(8).putInt(0).put(msgTypeResponse).clear().getLong
       if (msgSizeLong > Int.MaxValue) {

@@ -8,6 +8,7 @@ import scala.concurrent.Future
 
 trait Peer extends AutoCloseable {
   def download(request: BlockRequest): Future[ByteVector]
+  def piece(idx: Int): Unit
   def address: InetSocketAddress
   def subscribe(s: Peer.Subscriber): Future[Unit]
   override def toString: String = address.toString
