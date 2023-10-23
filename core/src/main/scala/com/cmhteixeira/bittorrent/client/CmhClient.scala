@@ -10,6 +10,7 @@ import scala.concurrent.Future
 trait CmhClient extends AutoCloseable {
   def downloadTorrent(t: Torrent, p: Path): Future[Path]
   def downloadTorrent(t: Path, p: Path): Either[CmhClient.SubmissionError, Future[Path]]
+  def info(p: Path): Either[String, Torrent]
   def statistics: Map[CmhClient.Torrent, Tracker.Statistics]
 
   def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails]
@@ -22,7 +23,6 @@ trait CmhClient extends AutoCloseable {
 }
 
 object CmhClient {
-
   case class Torrent(infoHash: InfoHash, name: String) {
 
     override def equals(obj: Any): Boolean =

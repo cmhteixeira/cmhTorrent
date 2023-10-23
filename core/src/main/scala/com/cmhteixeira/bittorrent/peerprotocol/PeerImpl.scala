@@ -178,8 +178,8 @@ final class PeerImpl private (
     case Message.ReceivedHandshake(handshaked) => receiveHandshake(handshaked)
     case Message.Choke => peerChoked()
     case Message.UnChoke => peerUnChoked()
-    case Message.Interested => updateHandShakedState(_.peerInterested)
-    case Message.Uninterested => updateHandShakedState(_.peerNotInterested)
+    case Message.Interested => peerInterested()
+    case Message.Uninterested => peerUnInterested()
     case Message.HasPiece(idx) => peerHasPiece(idx)
     case Message.HasPieces(idx) => idx.zipWithIndex.foreach { case (hasPiece, i) => if (hasPiece) peerHasPiece(i) }
     case i @ Message.Request(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
@@ -228,36 +228,29 @@ final class PeerImpl private (
     }
   }
 
-  private def updateHandShakedState(f: Handshaked => Handshaked): Unit = {
+  private def updateHandShakedState(f: Handshaked => Handshaked, onSuccess: Handshaked => Unit): Unit = {
     val currentState = state.get()
     currentState match {
-      case hand: State.Handshaked => if (!state.compareAndSet(currentState, hand)) updateHandShakedState(f)
+      case hand: State.Handshaked =>
+        val newState = f(hand)
+        if (!state.compareAndSet(currentState, f(hand))) updateHandShakedState(f, onSuccess) else onSuccess(newState)
       case otherState => logger.warn(s"Updating handshaked state, but current state is $otherState.")
     }
   }
-  private def peerUnChoked(): Unit = {
-    updateHandShakedState(_.unShokePeer)
-    state.get() match {
-      case handshaked: State.Handshaked => handshaked.subscriber.unChocked()
-      case otherState => logger.warn(s"Unchoking, but state is '$otherState'.")
-    }
-  }
 
-  private def peerChoked(): Unit = {
-    updateHandShakedState(_.chokePeer)
-    state.get() match {
-      case handshaked: State.Handshaked => handshaked.subscriber.chocked()
-      case otherState => logger.warn(s"Choking, but state is '$otherState'.")
-    }
-  }
+  private def peerUnInterested(): Unit =
+    updateHandShakedState(_.peerNotInterested, _)
+  private def peerInterested(): Unit =
+    updateHandShakedState(_.peerInterested, _)
 
-  private def peerHasPiece(idx: Int): Unit = {
-    updateHandShakedState(_.pierHasPiece(idx))
-    state.get() match {
-      case handshaked: State.Handshaked => handshaked.subscriber.hasPiece(idx)
-      case otherState => logger.warn("")
-    }
-  }
+  private def peerUnChoked(): Unit =
+    updateHandShakedState(_.unShokePeer, _.subscriber.unChocked())
+
+  private def peerChoked(): Unit =
+    updateHandShakedState(_.chokePeer, _.subscriber.chocked())
+
+  private def peerHasPiece(idx: Int): Unit =
+    updateHandShakedState(_.pierHasPiece(idx), _.subscriber.hasPiece(idx))
   override def piece(idx: Int): Unit = {
     val currentState = state.get()
     currentState match {

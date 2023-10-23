@@ -17,8 +17,10 @@ import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
-import scala.util.{Failure, Success}
+import scala.language.postfixOps
+import scala.util.{Failure, Success, Try}
 
 private class SwarmImpl private (
     state: AtomicReference[SwarmImpl.State],
@@ -35,6 +37,8 @@ private class SwarmImpl private (
   tracker
     .submit(torrent.toTrackerTorrent)
     .subscribe(this)
+
+  run()
 
   private def removePeer(peer: Peer): Unit = {
     val currentState = state.get()
@@ -80,7 +84,6 @@ private class SwarmImpl private (
     override def hasPiece(idx: Int): Unit = {
       logger.info(s"Peer '$peer' has piece $idx")
       hasPieceA(idx)
-      run()
     }
   }
 
@@ -136,7 +139,7 @@ private class SwarmImpl private (
     currentState match {
       case SwarmImpl.Closed => Left("Swarm already closed.")
       case active: SwarmImpl.Active =>
-        chooseBlockToDownload(active).toRight("Could not choose block").flatMap { case (blockR, peer) =>
+        chooseBlockToDownload(active).left.map(g => s"Could not choose block: $g").flatMap { case (blockR, peer) =>
           active.markBlockForDownload(blockR) match {
             case Left(_) => Left("Correct later....")
             case Right(newState) =>
@@ -150,11 +153,12 @@ private class SwarmImpl private (
 
   private def run(): Future[Unit] = {
     implicit val ec: ExecutionContext = mainExecutor
-    chooseBlock() match {
+    (chooseBlock() match {
       case Left(value) =>
-        logger.info(s"Stopping task: $value")
+        logger.info(s"Could not choose block. Delaying by 100 millis.: $value")
         Future.unit
-      case Right((blockR, peer)) =>
+      case Right(a @ (blockR, peer)) =>
+        logger.info(s"Choose block '$blockR for download.")
         (for {
           byteVector <- timeout(peer.download(blockR))
           fileChunks <- torrent.fileChunks(blockR.index, blockR.offSet, byteVector) match {
@@ -167,19 +171,15 @@ private class SwarmImpl private (
             if (newState4Piece.allBlocksDownloaded) hashCheck(blockR, torrent.info.pieces.toList(blockR.index))
             else Future.successful(false)
           _ = if (pieceDownloaded) notifyHave(blockR.index)
-          _ <- state.get() match {
-            case SwarmImpl.Closed => Future.unit
-            case active: SwarmImpl.Active =>
-              val newRunsToSpawn = maxBlocksAtOnce - active.numBlocksDownloading
-              if (newRunsToSpawn > 0) (1 to newRunsToSpawn).toList.map(_ => run()).sequence else Future.unit
-          }
-        } yield ()).andThen {
-          case Failure(exception) =>
+        } yield a)
+          .map { case (bR, p) => logger.info(s"Downloaded $bR from $p") }
+          .recoverWith { case e: Exception =>
+            logger.info(s"Failed download $blockR from $peer", e)
             markAsFailed(blockR)
-            logger.warn("Finished", exception)
-          case Success(_) => logger.info("Finished")
-        }
-    }
+            Future.unit
+          }
+
+    }).flatMap(_ => delay(Success(), 100 millis)).flatMap(_ => run())
   }
 
   def notifyHave(piece: Int): Unit =
@@ -200,24 +200,33 @@ private class SwarmImpl private (
 
   private def chooseBlockToDownload(
       active: SwarmImpl.Active
-  ): Option[(BlockRequest, Peer)] =
-    active.piecesToState
-      .collect { case (idx, downloading @ SwarmImpl.PieceState.Downloading(_)) =>
-        (idx, active.piecesToPeers(idx), downloading)
+  ): Either[String, (BlockRequest, Peer)] = {
+    for {
+      piecesToDownload <- Right(active.piecesToState.collect {
+        case (idx, downloading @ SwarmImpl.PieceState.Downloading(_)) =>
+          (idx, active.piecesToPeers(idx), downloading)
+      })
+      piecesToDownloadV <- Either.cond(piecesToDownload.nonEmpty, piecesToDownload, "No pieces to download.")
+      g <- Right(piecesToDownloadV.filter { case (_, peers, _) => peers.nonEmpty })
+      gV <- Either.cond(
+        g.nonEmpty,
+        g,
+        s"Downloadable pieces don't have peers peers: [${piecesToDownloadV.map(_._1).mkString(",")}]"
+      )
+      foo <- Right(gV.toList.sortBy { case (_, _, downloading) => downloading.blocksMissing })
+      pl <- foo.headOption match {
+        case Some(value) => Right(value)
+        case None => Left("WRID")
       }
-      .toList
-      .filter { case (_, peers, _) => peers.nonEmpty }
-      .sortBy { case (_, peers, _) => peers.size }
-      .headOption
-      .flatMap { case (_, value, SwarmImpl.PieceState.Downloading(blocks)) =>
-        blocks
-          .find {
-            case (_, BlockState.Missing) => true
-            case _ => false
-          }
-          .map { case (bR, _) => (bR, value.head) }
-      }
-
+      (piece, peers, SwarmImpl.PieceState.Downloading(blocks)) = pl
+      m <- blocks
+        .find {
+          case (_, BlockState.Missing) => true
+          case _ => false
+        }
+        .toRight(s"No blocks on piece $piece still Missing.")
+    } yield (m._1, peers.head)
+  }
   private def timeout[A](fut: Future[A]): Future[A] = { // TODO: For shutdown, need to take care of this.
     val promise = Promise[A]()
     scheduler.schedule( // todo: Check if usage of try-complete is appropriate
@@ -228,6 +237,16 @@ private class SwarmImpl private (
     fut.onComplete(promise.tryComplete)(
       mainExecutor
     ) // todo: Check if usage of try-complete is appropriate (according with scala-docs, makes programs non-deterministic (which I think is fair))
+    promise.future
+  }
+
+  private def delay[A](futValue: Try[A], by: FiniteDuration): Future[A] = {
+    val promise = Promise[A]()
+    scheduler.schedule(
+      new Runnable { override def run(): Unit = promise.tryComplete(futValue) },
+      by.toMillis,
+      TimeUnit.MILLISECONDS
+    )
     promise.future
   }
 
@@ -301,7 +320,7 @@ object SwarmImpl {
 
   type PeerFactory = InetSocketAddress => Peer
 
-  private val maxBlocksAtOnce = 100
+  private val maxBlocksAtOnce = 5
   case class Configuration(downloadDir: Path, blockSize: Int)
 
   private[swarm] case class PeerState(chocked: Boolean, uploaded: Long, downloaded: Long, pieces: Set[Int])
@@ -374,8 +393,8 @@ object SwarmImpl {
       piecesToState.get(blockRequest.index) match {
         case Some(Downloaded) => Left(Active.OmgError(s"Piece ${blockRequest.index} already downloaded."))
         case Some(d @ SwarmImpl.PieceState.Downloading(blocks)) =>
-          val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
-          Right(newState, updateState(blockRequest.index, newState))
+//          val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
+//          Right(newState, updateState(blockRequest.index, newState))
           blocks.get(blockRequest) match {
             case Some(BlockState.Missing) =>
               val newState = d.copy(blocks = blocks + (blockRequest -> BlockState.Asked))
@@ -475,7 +494,12 @@ object SwarmImpl {
 
   object PieceState {
 
-    case class Downloading(blocks: Map[BlockRequest, BlockState]) extends PieceState
+    case class Downloading(blocks: Map[BlockRequest, BlockState]) extends PieceState {
+      def blocksMissing: Int = blocks.count {
+        case (_, BlockState.Missing) => true
+        case _ => false
+      }
+    }
     case object Downloaded extends PieceState
     sealed trait BlockState
 

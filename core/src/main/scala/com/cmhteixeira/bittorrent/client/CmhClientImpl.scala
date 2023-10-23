@@ -100,6 +100,7 @@ class CmhClientImpl private (
 
   override def statistics: Map[CmhClient.Torrent, Tracker.Statistics] =
     torrents.get().map { case (clientTorrent, swarm) => clientTorrent -> swarm.trackerStats }
+  override def info(p: Path): Either[String, SwarmTorrent] = parseTorrentFromFile(p)
 }
 
 object CmhClientImpl {

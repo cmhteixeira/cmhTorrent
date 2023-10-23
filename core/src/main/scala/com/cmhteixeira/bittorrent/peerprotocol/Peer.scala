@@ -24,5 +24,7 @@ object Peer {
 
     def hasPiece(idx: Int): Unit
   }
-  case class BlockRequest(index: Int, offSet: Int, length: Int)
+  case class BlockRequest(index: Int, offSet: Int, length: Int) {
+    override def toString: String = s"Block[index=$index,offset=$offSet,len=$length]"
+  }
 }

@@ -10,26 +10,28 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
 
+import java.io.FileInputStream
+import java.nio.file.{Path, Paths}
 class TorrentSpec extends AnyFunSuite with Matchers {
   val decoder = implicitly[BDecoder[OriginalTorrent]]
 
-  lazy val torrent1 = for {
-    parsed <- parse(getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes()).left.map(_.toString)
-    torrent <- decoder(parsed).left.map(_.toString)
-    info <- parsed.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
-    swarmTorrent <- Torrent(InfoHash(info), torrent)
-  } yield swarmTorrent
+  lazy val torrent1 =
+    TorrentSpec.parseTorrent(getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes())
 
-  lazy val torrent2 = for {
-    parsed <- parse(
+  lazy val torrent2 =
+    TorrentSpec.parseTorrent(
       getClass
         .getResourceAsStream("/MagnetLinkToTorrent_99B32BCD38B9FBD8E8B40D2B693CF905D71ED97F.torrent")
         .readAllBytes()
-    ).left.map(_.toString)
-    torrent <- decoder(parsed).left.map(_.toString)
-    info <- parsed.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
-    swarmTorrent <- Torrent(InfoHash(info), torrent)
-  } yield swarmTorrent
+    )
+
+  lazy val torrent3 = TorrentSpec.parseTorrent(
+    new FileInputStream(
+      Paths
+        .get(System.getProperty("user.home"), "Desktop", "torrents", "Succession_Season_1_Complete.torrent")
+        .toFile
+    ).readAllBytes()
+  )
 
   test("verify assertions for torrent1") {
     torrent1 match {
@@ -85,5 +87,50 @@ class TorrentSpec extends AnyFunSuite with Matchers {
             )
           )
     }
+  }
+
+  test("verify assertions for torrent3") {
+    torrent3 match {
+      case Left(value) => fail(s"Tested not attempted: '$value'.")
+      case Right(swarmTorrent) =>
+        val files = swarmTorrent.info match {
+          case Torrent.SingleFile(_, path, _, _) => List(path)
+          case Torrent.MultiFile(files, name, _, _) => files.map(_.path).map(name.resolve).toList
+        }
+        println(s"Number pieces: ${swarmTorrent.info.pieces.size}")
+        println(
+          swarmTorrent.info.pieces.zipWithIndex
+            .map { case (_, idx) =>
+              swarmTorrent
+                .fileSlices(idx)
+                .map(f =>
+                  f.toList
+                    .map { case Torrent.FileSlice(path, offset, size) => s"   $path, $offset, $size" }
+                    .mkString("\n")
+                )
+                .getOrElse("ERROR")
+            }
+            .toList
+            .mkString("\n")
+        )
+//        swarmTorrent.fileSlices(1750) match {
+//          case Some(value) =>
+//            value.toList.foreach { case Torrent.FileSlice(path, offset, size) =>
+//              println(s"$path, $offset, $size")
+//            }
+//          case None => println("Nothing")
+//        }
+    }
+  }
+}
+
+object TorrentSpec {
+  def parseTorrent(p: Array[Byte])(implicit ev: BDecoder[OriginalTorrent]): Either[String, Torrent] = {
+    for {
+      parsed <- parse(p).left.map(_.toString)
+      torrent <- ev(parsed).left.map(_.toString)
+      info <- parsed.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
+      swarmTorrent <- Torrent(InfoHash(info), torrent)
+    } yield swarmTorrent
   }
 }
