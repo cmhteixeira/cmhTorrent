@@ -1,13 +1,12 @@
 package com.cmhteixeira
 
 import com.cmhteixeira.bencode.Bencode
-
+import scodec.bits.ByteVector
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
 package bittorrent {
-  import scodec.bits.ByteVector
 
   case class PeerId(underlying: String) extends AnyVal
 
@@ -45,7 +44,9 @@ package bittorrent {
     * @param hostName
     * @param port
     */
-  case class UdpSocket(hostName: String, port: Int)
+  case class UdpSocket(hostName: String, port: Int) {
+    final override def toString: String = s"$hostName:$port"
+  }
 
   object UdpSocket {
     def parseToUdpSocketAddress(a: String): Either[String, UdpSocket] = {

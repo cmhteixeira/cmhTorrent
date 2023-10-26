@@ -2,8 +2,7 @@ package com.cmhteixeira.bencode
 
 import cats.Show
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
-import com.cmhteixeira.bencode.DecodingFailure.GenericDecodingFailure
-import com.cmhteixeira.cmhtorrent.Torrent
+import com.cmhteixeira.bittorrent.Torrent
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 
@@ -87,32 +86,23 @@ class DecodeSpec extends AnyFunSuite with Matchers {
   }
 
   test("FOOBAR") {
-    val r = getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes()
-    val decoder = implicitly[Decoder[Torrent]]
-    parse(r) match {
+    Torrent(getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes()) match {
       case Left(value) => println(value)
-      case Right(value) =>
-        decoder(value) match {
-          case Left(value) =>
-            println(value.asInstanceOf[GenericDecodingFailure].msg)
-          case Right(value) =>
-            println(Show[Torrent].show(value))
-        }
+      case Right(value) => println(Show[Torrent].show(value))
     }
   }
 
   test("This should work") {
-    val r = getClass.getResourceAsStream("/Black.Adam.(2022).[720p].[WEBRip].[YTS].torrent").readAllBytes()
-    val decoder = implicitly[Decoder[Torrent]]
-    parse(r) match {
+    Torrent(getClass.getResourceAsStream("/Black.Adam.(2022).[720p].[WEBRip].[YTS].torrent").readAllBytes()) match {
       case Left(value) => println(value)
-      case Right(value) =>
-        decoder(value) match {
-          case Left(value) =>
-            println(value.asInstanceOf[GenericDecodingFailure].msg)
-          case Right(value) =>
-            println(Show[Torrent].show(value))
-        }
+      case Right(value) => println(Show[Torrent].show(value))
+    }
+  }
+
+  test("Print succession torrent") {
+    Torrent(getClass.getResourceAsStream("/Succession_Season_1_Complete.torrent").readAllBytes()) match {
+      case Left(value) => println(value)
+      case Right(value) => println(Show[Torrent].show(value))
     }
   }
 

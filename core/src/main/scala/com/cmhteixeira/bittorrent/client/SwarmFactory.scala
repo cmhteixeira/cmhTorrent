@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.client
 
-import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.swarm.Swarm
+import com.cmhteixeira.bittorrent.{Torrent => SwarmTorrent}
 
 import java.nio.file.Path
 

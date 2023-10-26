@@ -1,7 +1,6 @@
 package com.cmhteixeira.bittorrent.client
 
-import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.swarm.Torrent
+import com.cmhteixeira.bittorrent.{InfoHash, Torrent}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 
 import java.nio.file.Path

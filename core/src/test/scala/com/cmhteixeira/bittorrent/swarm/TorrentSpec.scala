@@ -1,36 +1,28 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
-import com.cmhteixeira.cmhtorrent.{Torrent => OriginalTorrent}
-import com.cmhteixeira.bencode.parse
-import com.cmhteixeira.bencode.{Decoder => BDecoder}
-import com.cmhteixeira.bittorrent.InfoHash
-import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
+import com.cmhteixeira.bittorrent.Torrent
+import com.cmhteixeira.bittorrent.Torrent.FileChunk
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
 
-import java.io.FileInputStream
-import java.nio.file.{Path, Paths}
 class TorrentSpec extends AnyFunSuite with Matchers {
-  val decoder = implicitly[BDecoder[OriginalTorrent]]
 
   lazy val torrent1 =
-    TorrentSpec.parseTorrent(getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes())
+    Torrent(getClass.getResourceAsStream("/clonezillaTorrent.torrent").readAllBytes())
 
   lazy val torrent2 =
-    TorrentSpec.parseTorrent(
+    Torrent(
       getClass
         .getResourceAsStream("/MagnetLinkToTorrent_99B32BCD38B9FBD8E8B40D2B693CF905D71ED97F.torrent")
         .readAllBytes()
     )
 
-  lazy val torrent3 = TorrentSpec.parseTorrent(
-    new FileInputStream(
-      Paths
-        .get(System.getProperty("user.home"), "Desktop", "torrents", "Succession_Season_1_Complete.torrent")
-        .toFile
-    ).readAllBytes()
+  lazy val torrent3 = Torrent(
+    getClass
+      .getResourceAsStream("/Succession_Season_1_Complete.torrent")
+      .readAllBytes()
   )
 
   test("verify assertions for torrent1") {
@@ -121,16 +113,5 @@ class TorrentSpec extends AnyFunSuite with Matchers {
 //          case None => println("Nothing")
 //        }
     }
-  }
-}
-
-object TorrentSpec {
-  def parseTorrent(p: Array[Byte])(implicit ev: BDecoder[OriginalTorrent]): Either[String, Torrent] = {
-    for {
-      parsed <- parse(p).left.map(_.toString)
-      torrent <- ev(parsed).left.map(_.toString)
-      info <- parsed.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
-      swarmTorrent <- Torrent(InfoHash(info), torrent)
-    } yield swarmTorrent
   }
 }

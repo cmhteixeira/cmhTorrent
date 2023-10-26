@@ -1,6 +1,6 @@
 package com.cmhteixeira.bittorrent.tracker
 
-import com.cmhteixeira.bittorrent.{InfoHash, PeerId}
+import com.cmhteixeira.bittorrent.{InfoHash, PeerId, Torrent}
 import com.cmhteixeira.bittorrent.tracker.AnnounceRequest.{Announce, Event}
 
 import java.nio.ByteBuffer

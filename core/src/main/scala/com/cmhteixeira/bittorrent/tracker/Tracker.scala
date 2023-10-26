@@ -1,7 +1,6 @@
 package com.cmhteixeira.bittorrent.tracker
 
-import com.cmhteixeira.bittorrent.InfoHash
-
+import com.cmhteixeira.bittorrent.{InfoHash, Torrent}
 import java.net.InetSocketAddress
 
 trait Tracker {

@@ -4,9 +4,8 @@ import cats.implicits.catsSyntaxFlatten
 import com.cmhteixeira.bittorrent.tracker._
 import com.cmhteixeira.bittorrent.tracker.impl.TrackerImpl.TrackerState._
 import com.cmhteixeira.bittorrent.tracker.impl.TrackerImpl._
-import com.cmhteixeira.bittorrent.{InfoHash, PeerId, UdpSocket}
+import com.cmhteixeira.bittorrent.{InfoHash, PeerId, Torrent, UdpSocket}
 import org.slf4j.LoggerFactory
-
 import java.net.{DatagramPacket, DatagramSocket, InetAddress, InetSocketAddress}
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference

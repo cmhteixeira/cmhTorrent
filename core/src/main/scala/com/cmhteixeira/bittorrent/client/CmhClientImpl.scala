@@ -1,14 +1,14 @@
 package com.cmhteixeira.bittorrent.client
 
-import com.cmhteixeira.{bencode, bittorrent}
-import com.cmhteixeira.bittorrent.InfoHash
+import com.cmhteixeira.bittorrent
+import com.cmhteixeira.bittorrent.Torrent
 import com.cmhteixeira.bittorrent.swarm.Swarm.PieceState
-import com.cmhteixeira.bittorrent.swarm.{Swarm, Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.swarm.Swarm
 import com.cmhteixeira.bittorrent.tracker.Tracker
+
 import java.nio.file.{Files, Path}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Future
-import com.cmhteixeira.cmhtorrent.Torrent
 import org.slf4j.LoggerFactory
 
 class CmhClientImpl private (
@@ -19,7 +19,7 @@ class CmhClientImpl private (
   private val logger = LoggerFactory.getLogger("cmhTorrent")
 
   override def downloadTorrent(
-      t: SwarmTorrent,
+      t: Torrent,
       p: Path
   ): Future[Path] =
     torrents.get().find { case (CmhClient.Torrent(infoHash, _), _) => infoHash == t.infoHash } match {
@@ -41,13 +41,7 @@ class CmhClientImpl private (
     res
   }
 
-  private def parseTorrentFromFile(path: Path): Either[String, SwarmTorrent] =
-    for {
-      a <- bencode.parse(Files.readAllBytes(path)).left.map(_ => "ERROR parsing")
-      info <- a.asDict.flatMap(_.apply("info")).toRight("Could not extract valid 'info' from Bencode.")
-      torrent <- a.as[Torrent].left.map(_.toString)
-      swarmTorrent <- SwarmTorrent(InfoHash(info), torrent)
-    } yield swarmTorrent
+  private def parseTorrentFromFile(path: Path): Either[String, Torrent] = Torrent(Files.readAllBytes(path))
 
   override def stop(t: bittorrent.InfoHash): Boolean = ???
   override def delete(t: bittorrent.InfoHash): Boolean = ???
@@ -100,7 +94,7 @@ class CmhClientImpl private (
 
   override def statistics: Map[CmhClient.Torrent, Tracker.Statistics] =
     torrents.get().map { case (clientTorrent, swarm) => clientTorrent -> swarm.trackerStats }
-  override def info(p: Path): Either[String, SwarmTorrent] = parseTorrentFromFile(p)
+  override def info(p: Path): Either[String, Torrent] = parseTorrentFromFile(p)
 }
 
 object CmhClientImpl {

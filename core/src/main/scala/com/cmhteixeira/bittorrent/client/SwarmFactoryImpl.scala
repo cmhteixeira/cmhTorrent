@@ -1,8 +1,9 @@
 package com.cmhteixeira.bittorrent.client
 
-import com.cmhteixeira.bittorrent.swarm.{Swarm, SwarmImpl, Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.swarm.{Swarm, SwarmImpl}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PeerFactory
+import com.cmhteixeira.bittorrent.{Torrent => SwarmTorrent}
 
 import java.nio.file.Path
 import java.util.concurrent.ScheduledExecutorService

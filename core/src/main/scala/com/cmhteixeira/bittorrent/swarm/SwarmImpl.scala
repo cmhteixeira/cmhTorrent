@@ -1,13 +1,13 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.implicits.{catsStdInstancesForFuture, toTraverseOps}
+import com.cmhteixeira.bittorrent.{Torrent}
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PieceState.{BlockState, Downloaded}
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{PeerFactory, maxBlocksAtOnce}
-import com.cmhteixeira.bittorrent.swarm.Torrent.FileChunk
+import com.cmhteixeira.bittorrent.Torrent.{FileChunk, PieceHash}
 import com.cmhteixeira.bittorrent.tracker.Tracker
-import com.cmhteixeira.cmhtorrent.PieceHash
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
@@ -35,7 +35,7 @@ private class SwarmImpl private (
     with Tracker.Subscriber {
   private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash.hex.take(6)}")
   tracker
-    .submit(torrent.toTrackerTorrent)
+    .submit(torrent)
     .subscribe(this)
 
   run()
