@@ -4,6 +4,7 @@ import cats.Show
 import com.cmhteixeira.bencode.Bencode.BDictionary
 import io.circe
 import io.circe.Json
+import com.cmhteixeira.bencode.Error.DecodingFailure
 
 import java.nio.charset.{Charset, StandardCharsets}
 

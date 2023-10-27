@@ -1,7 +1,8 @@
 package com.cmhteixeira.bencode
 
 import cats.implicits.toTraverseOps
-import com.cmhteixeira.bencode.DecodingFailure.NotABList
+import com.cmhteixeira.bencode.Error.DecodingFailure
+import com.cmhteixeira.bencode.Error.DecodingFailure.NotABList
 
 trait Decoder[T] {
   def apply(t: Bencode): Either[DecodingFailure, T]

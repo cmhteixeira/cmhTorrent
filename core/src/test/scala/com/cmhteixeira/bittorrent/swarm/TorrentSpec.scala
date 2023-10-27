@@ -1,11 +1,8 @@
 package com.cmhteixeira.bittorrent.swarm
 
-import cats.Show
 import cats.data.NonEmptyList
-import cats.implicits.toSemigroupKOps
 import com.cmhteixeira.bittorrent.Torrent
 import com.cmhteixeira.bittorrent.Torrent.FileChunk
-import org.scalatest.{FixtureContext, Succeeded}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector

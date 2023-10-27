@@ -1,7 +1,7 @@
 package com.cmhteixeira
 
 import com.cmhteixeira.bencode.Bencode._
-import com.cmhteixeira.bencode.ParsingFailure.{
+import com.cmhteixeira.bencode.Error.ParsingFailure.{
   BadByteString,
   BadDictionary,
   BadInteger,
@@ -18,7 +18,7 @@ package object bencode extends Parser with Serializer {
 
   override def parse(
       input: Array[Byte]
-  ): Either[ParsingFailure, Bencode] =
+  ): Either[Error.ParsingFailure, Bencode] =
     bParse(input.map(_.toChar).toList).flatMap {
       case (bencode, Nil) => Right(bencode)
       case (_: BInteger, remaining) => Left(DataAfterInteger)
@@ -27,19 +27,19 @@ package object bencode extends Parser with Serializer {
       case (_: BDictionary, remaining) => Left(DataAfterDictionary)
     }
 
-  private def bParse(input: List[Char]): Either[ParsingFailure, (Bencode, List[Char])] = {
+  private def bParse(input: List[Char]): Either[Error.ParsingFailure, (Bencode, List[Char])] = {
     input match {
       case 'i' :: '-' :: xs => bParseInt(xs, 0).map { case (a, b) => (BInteger(a.underlying * (-1L)), b) }
       case 'i' :: xs => bParseInt(xs, 0)
       case b @ a :: xs if a.isDigit => parseByteString(b)
       case 'l' :: xs => parseList(xs, List.empty)
       case 'd' :: xs => parseDict(xs, Map.empty)
-      case _ => Left(ParsingFailure.DataAfterInteger)
+      case _ => Left(Error.ParsingFailure.DataAfterInteger)
     }
   }
 
   @tailrec
-  private def bParseInt(in: List[Char], cumulative: Long): Either[ParsingFailure, (BInteger, List[Char])] =
+  private def bParseInt(in: List[Char], cumulative: Long): Either[Error.ParsingFailure, (BInteger, List[Char])] =
     in match {
       case head :: tl if head.isDigit => bParseInt(tl, cumulative * 10 + head.asDigit)
       case head :: tl if head == 'e' => Right((BInteger(cumulative), tl))
@@ -48,10 +48,10 @@ package object bencode extends Parser with Serializer {
 
   private def parseByteString(
       in: List[Char]
-  ): Either[ParsingFailure, (BByteString, List[Char])] = {
+  ): Either[Error.ParsingFailure, (BByteString, List[Char])] = {
 
     @tailrec
-    def readPart1(in: List[Char], bytesToRead: Long): Either[ParsingFailure, (BByteString, List[Char])] =
+    def readPart1(in: List[Char], bytesToRead: Long): Either[Error.ParsingFailure, (BByteString, List[Char])] =
       in match {
         case a :: xs if a.isDigit => readPart1(xs, bytesToRead * 10 + a.asDigit)
         case ':' :: rest =>
@@ -74,7 +74,10 @@ package object bencode extends Parser with Serializer {
   }
 
   @tailrec
-  private def parseList(in: List[Char], cumulative: List[Bencode]): Either[ParsingFailure, (BList, List[Char])] = {
+  private def parseList(
+      in: List[Char],
+      cumulative: List[Bencode]
+  ): Either[Error.ParsingFailure, (BList, List[Char])] = {
     bParse(in) match {
       case Left(l) => Left(l)
       case Right((bencode, 'e' :: xs)) => Right(BList(cumulative :+ bencode), xs)
@@ -86,7 +89,7 @@ package object bencode extends Parser with Serializer {
   private def parseDict(
       in: List[Char],
       cumulative: Map[BByteString, Bencode]
-  ): Either[ParsingFailure, (BDictionary, List[Char])] =
+  ): Either[Error.ParsingFailure, (BDictionary, List[Char])] =
     in match {
       case Nil => Right((BDictionary(cumulative), Nil))
       case 'e' :: rest => Right(BDictionary(cumulative), rest)

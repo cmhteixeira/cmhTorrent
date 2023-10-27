@@ -14,8 +14,13 @@ import cats.implicits.{
 }
 import com.cmhteixeira.bencode
 import com.cmhteixeira.bencode.Bencode.{BByteString, BDictionary, BInteger, BList}
-import com.cmhteixeira.bencode.DecodingFailure.{DictionaryKeyMissing, DifferentTypeExpected, GenericDecodingFailure}
-import com.cmhteixeira.bencode.{Bencode, Decoder, DecodingFailure, Encoder}
+import com.cmhteixeira.bencode.Error.DecodingFailure
+import com.cmhteixeira.bencode.Error.DecodingFailure.{
+  DictionaryKeyMissing,
+  DifferentTypeExpected,
+  GenericDecodingFailure
+}
+import com.cmhteixeira.bencode.{Bencode, Decoder, Encoder}
 import org.apache.commons.codec.binary.Hex
 
 import java.nio.file.{Path, Paths}
@@ -37,12 +42,16 @@ case class Torrent(
   def splitInBlocks(pieceIndex: Int, blockSize: Int): List[(Int, Int)] = split(pieceSize(pieceIndex), blockSize)
 
   /** asd
-   *
-   * @param pieceIndex 0-index position of piece
-   * @param offset Byte offset from within the piece.
-   * @param block Data
-   * @return ad
-   */
+    *
+    * @param pieceIndex
+    *   0-index position of piece
+    * @param offset
+    *   Byte offset from within the piece.
+    * @param block
+    *   Data
+    * @return
+    *   ad
+    */
   def fileChunks(pieceIndex: Int, offset: Int, block: ByteVector): Option[NonEmptyList[Torrent.FileChunk]] =
     info match {
       case sF: Torrent.SingleFile => sF.fileChunk(pieceIndex, offset, block).map(NonEmptyList.one)
