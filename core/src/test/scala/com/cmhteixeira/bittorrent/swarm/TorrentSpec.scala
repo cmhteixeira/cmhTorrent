@@ -1,8 +1,11 @@
 package com.cmhteixeira.bittorrent.swarm
 
+import cats.Show
 import cats.data.NonEmptyList
+import cats.implicits.toSemigroupKOps
 import com.cmhteixeira.bittorrent.Torrent
 import com.cmhteixeira.bittorrent.Torrent.FileChunk
+import org.scalatest.{FixtureContext, Succeeded}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 import scodec.bits.ByteVector
@@ -84,34 +87,48 @@ class TorrentSpec extends AnyFunSuite with Matchers {
   test("verify assertions for torrent3") {
     torrent3 match {
       case Left(value) => fail(s"Tested not attempted: '$value'.")
-      case Right(swarmTorrent) =>
-        val files = swarmTorrent.info match {
-          case Torrent.SingleFile(_, path, _, _) => List(path)
-          case Torrent.MultiFile(files, name, _, _) => files.map(_.path).map(name.resolve).toList
+      case Right(torrent) =>
+        val sizeLastPiece = torrent.pieceSize(torrent.info.pieces.size - 1)
+        val expectedLastPieceSize = torrent.info match {
+          case Torrent.SingleFile(length, _, pieceLength, pieces) => length - pieceLength * (pieces.size - 1)
+          case Torrent.MultiFile(files, _, pieceLength, pieces) =>
+            val totalSize = files.map(_.length).toList.sum
+            totalSize - pieceLength * (pieces.size - 1)
         }
-        println(s"Number pieces: ${swarmTorrent.info.pieces.size}")
+        sizeLastPiece shouldBe expectedLastPieceSize
+        (0 until (torrent.info.pieces.size - 1)).foreach { idx =>
+          val actual = torrent.pieceSize(idx)
+          if (actual != torrent.info.pieceLength)
+            fail(
+              s"Piece index $idx (zero index, out of ${torrent.info.pieces.size}) has $actual, when expecting a normal size of ${torrent.info.pieceLength}"
+            )
+        }
+    }
+  }
+
+  test("verify assertions for torrent3 - 2") {
+    torrent3 match {
+      case Left(value) => fail(s"Tested not attempted: '$value'.")
+      case Right(torrent) =>
+        println(s"Torrent length: ${torrent.filesLength}")
+        println(torrent.fileSlices(511))
+        println(torrent.fileSlices(512))
+
         println(
-          swarmTorrent.info.pieces.zipWithIndex
+          torrent.info.pieces.zipWithIndex
             .map { case (_, idx) =>
-              swarmTorrent
+              torrent
                 .fileSlices(idx)
                 .map(f =>
-                  f.toList
-                    .map { case Torrent.FileSlice(path, offset, size) => s"   $path, $offset, $size" }
-                    .mkString("\n")
+                  s"$idx: " + f.toList
+                    .map { case Torrent.FileSlice(path, offset, size) => s"$path, $offset, $size" }
+                    .mkString("\n  -> ")
                 )
                 .getOrElse("ERROR")
             }
             .toList
             .mkString("\n")
         )
-//        swarmTorrent.fileSlices(1750) match {
-//          case Some(value) =>
-//            value.toList.foreach { case Torrent.FileSlice(path, offset, size) =>
-//              println(s"$path, $offset, $size")
-//            }
-//          case None => println("Nothing")
-//        }
     }
   }
 }

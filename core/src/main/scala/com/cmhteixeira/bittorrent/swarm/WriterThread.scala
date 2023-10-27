@@ -138,7 +138,7 @@ private[swarm] class WriterThread private (
     }
   }
 
-  private def writeBlockToFile(pieceFile: TorrentFile, offSet: Int, data: ByteVector): Try[Unit] =
+  private def writeBlockToFile(pieceFile: TorrentFile, offSet: Long, data: ByteVector): Try[Unit] =
     pieceFile.write(offSet, data) match {
       case Left(TorrentFile.WriteError.Io(exception)) =>
         Failure(new IOException(s"Writing ${data.length} from offset $offSet to '${pieceFile.path}'.", exception))
@@ -161,7 +161,7 @@ private[swarm] class WriterThread private (
 
   override def write(
       file: Path,
-      offset: Int,
+      offset: Long,
       block: ByteVector
   ): Future[Unit] = {
     val promise = Promise[Unit]()
@@ -172,7 +172,7 @@ private[swarm] class WriterThread private (
 
   override def read(
       file: Path,
-      offset: Int,
+      offset: Long,
       chunkSize: Int
   ): Future[ByteVector] = {
     val promise = Promise[ByteVector]()
@@ -202,7 +202,7 @@ private[swarm] class WriterThread private (
 object WriterThread {
 
   private sealed trait Message
-  private case class Write(channel: Promise[Unit], file: Path, offset: Int, block: ByteVector) extends Message
+  private case class Write(channel: Promise[Unit], file: Path, offset: Long, block: ByteVector) extends Message
 
   private case class Read(channel: Promise[ByteVector], file: Path, offset: Long, len: Long) extends Message
 

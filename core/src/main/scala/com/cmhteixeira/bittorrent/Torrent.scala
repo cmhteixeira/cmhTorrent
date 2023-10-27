@@ -36,6 +36,13 @@ case class Torrent(
 
   def splitInBlocks(pieceIndex: Int, blockSize: Int): List[(Int, Int)] = split(pieceSize(pieceIndex), blockSize)
 
+  /** asd
+   *
+   * @param pieceIndex 0-index position of piece
+   * @param offset Byte offset from within the piece.
+   * @param block Data
+   * @return ad
+   */
   def fileChunks(pieceIndex: Int, offset: Int, block: ByteVector): Option[NonEmptyList[Torrent.FileChunk]] =
     info match {
       case sF: Torrent.SingleFile => sF.fileChunk(pieceIndex, offset, block).map(NonEmptyList.one)
@@ -47,6 +54,12 @@ case class Torrent(
       case sF: Torrent.SingleFile => sF.fileSlice(pieceIndex).map(NonEmptyList.one)
       case mF: Torrent.MultiFile => mF.fileSlices(pieceIndex)
     }
+
+  /** Obtain the length in bytes of the contents the torrent refers to (not the size of the torrent file). */
+  def filesLength: Long = info match {
+    case Torrent.SingleFile(length, _, _, _) => length
+    case Torrent.MultiFile(files, _, _, _) => files.toList.map(_.length).sum
+  }
 }
 
 object Torrent {
@@ -300,8 +313,8 @@ object Torrent {
         })
   }
 
-  case class FileSlice(path: Path, offset: Int, size: Int)
-  case class FileChunk(path: Path, offset: Int, block: ByteVector)
+  case class FileSlice(path: Path, offset: Long, size: Int)
+  case class FileChunk(path: Path, offset: Long, block: ByteVector)
 
   private def split(pieceSize: Int, blockSize: Int): List[(Int, Int)] = {
     val reminder = pieceSize % blockSize
@@ -337,7 +350,7 @@ object Torrent {
     def fileSlice(pieceIndex: Int): Option[FileSlice] = {
       val startOfPiece = pieceLength * pieceIndex
       val thisPieceLength = pieceSize(pieceIndex)
-      if (startOfPiece + thisPieceLength <= length) Some(FileSlice(path, startOfPiece.toInt, thisPieceLength))
+      if (startOfPiece + thisPieceLength <= length) Some(FileSlice(path, startOfPiece, thisPieceLength))
       else None
     }
 
@@ -356,10 +369,10 @@ object Torrent {
       extends Info {
 
     def fileSlices(index: Int): Option[NonEmptyList[FileSlice]] =
-      fileSlices(index * pieceLength.toInt, pieceSize(index))
+      fileSlices(index * pieceLength, pieceSize(index))
 
     def fileChunks(pieceIndex: Int, offset: Int, block: ByteVector): Option[NonEmptyList[FileChunk]] =
-      fileSlices(pieceIndex * pieceLength.toInt + offset, block.size.toInt)
+      fileSlices(pieceIndex * pieceLength + offset, block.size.toInt)
         .map(_.foldLeft[(ByteVector, List[FileChunk])]((block, List.empty)) {
           case ((remaininBlock, accu), FileSlice(path, offset, size)) =>
             (remaininBlock.drop(size), accu :+ FileChunk(path, offset, remaininBlock.take(size)))
@@ -367,9 +380,9 @@ object Torrent {
         .map(_._2)
         .flatMap(NonEmptyList.fromList) // is this safe?
 
-    private def fileSlices(torrentOffset: Int, length: Int): Option[NonEmptyList[FileSlice]] =
+    private def fileSlices(torrentOffset: Long, sliceLength: Int): Option[NonEmptyList[FileSlice]] =
       (for {
-        (firstFileChunk, remainingFiles, blockLeft) <- findFirst(files.toList, torrentOffset, length)
+        (firstFileChunk, remainingFiles, blockLeft) <- findFirst(files.toList, torrentOffset, sliceLength)
         remainingFileChunks <- (blockLeft, remainingFiles) match {
           case (0, _) => Some(List.empty)
           case (_, Nil) => None
@@ -386,9 +399,9 @@ object Torrent {
       files match {
         case File(fileLength, path) :: otherFiles =>
           val sliceInThisFile = fileLength - remainingOffset
-          if (sliceInThisFile >= length) Some(FileSlice(path, remainingOffset.toInt, length.toInt), otherFiles, 0)
+          if (sliceInThisFile >= length) Some(FileSlice(path, remainingOffset, length.toInt), otherFiles, 0)
           else if (sliceInThisFile > 0)
-            Some(FileSlice(path, remainingOffset.toInt, sliceInThisFile.toInt), otherFiles, length - sliceInThisFile)
+            Some(FileSlice(path, remainingOffset, sliceInThisFile.toInt), otherFiles, length - sliceInThisFile)
           else findFirst(otherFiles, remainingOffset - fileLength, length)
         case Nil => None
       }
