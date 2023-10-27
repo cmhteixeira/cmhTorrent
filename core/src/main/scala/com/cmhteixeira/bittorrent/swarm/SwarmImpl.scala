@@ -208,11 +208,7 @@ private class SwarmImpl private (
       })
       piecesToDownloadV <- Either.cond(piecesToDownload.nonEmpty, piecesToDownload, "No pieces to download.")
       g <- Right(piecesToDownloadV.filter { case (_, peers, _) => peers.nonEmpty })
-      gV <- Either.cond(
-        g.nonEmpty,
-        g,
-        s"Downloadable pieces don't have peers peers: [${piecesToDownloadV.map(_._1).mkString(",")}]"
-      )
+      gV <- Either.cond(g.nonEmpty, g, s"Downloadable pieces don't have peers.")
       foo <- Right(gV.toList.sortBy { case (_, _, downloading) => downloading.blocksMissing })
       pl <- foo.headOption match {
         case Some(value) => Right(value)
