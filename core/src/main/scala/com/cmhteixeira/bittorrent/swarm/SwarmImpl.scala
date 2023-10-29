@@ -1,12 +1,13 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.implicits.{catsStdInstancesForFuture, toTraverseOps}
-import com.cmhteixeira.bittorrent.{Torrent}
+import com.cmhteixeira.bittorrent.Torrent
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PieceState.{BlockState, Downloaded}
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{PeerFactory, maxBlocksAtOnce}
 import com.cmhteixeira.bittorrent.Torrent.{FileChunk, PieceHash}
+import com.cmhteixeira.bittorrent.consumer.Funil
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
@@ -310,6 +311,7 @@ private class SwarmImpl private (
         } ::: (1 to unconnectedPeers.size).toList.map(_ => Swarm.PeerState.Unconnected)
     }
   }
+  override def subscribe(s: Funil): Future[Unit] = ???
 }
 
 object SwarmImpl {

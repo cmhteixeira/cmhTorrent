@@ -1,9 +1,14 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import com.cmhteixeira.bittorrent.tracker.Tracker
+import com.cmhteixeira.bittorrent.consumer
+
+import scala.concurrent.Future
+
 trait Swarm extends AutoCloseable {
   def getPieces: List[Swarm.PieceState]
   def getPeers: List[Swarm.PeerState]
+  def subscribe(s: consumer.Funil): Future[Unit]
   def trackerStats: Tracker.Statistics
   def close(): Unit
 }
