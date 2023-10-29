@@ -29,6 +29,7 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
     "list" -> new CommandMethods(a => listExecute(a), a => defaultCompleter(a)),
     "details" -> new CommandMethods(a => detailsExecute(a), a => defaultCompleter(a)),
     "peers" -> new CommandMethods(a => peersExecute(a), a => defaultCompleter(a)),
+    "signal" -> new CommandMethods(a => signal(a), a => defaultCompleter(a)),
     "stats" -> new CommandMethods(a => stats(a), a => defaultCompleter(a))
     //      "tput" -> new CommandMethods(this::tput, this::tputCompleter),
     //    "testkey" -> new CommandMethods(this::testkey, this::defaultCompleter),
@@ -69,6 +70,20 @@ class ReplCommandsInterface private (torrentClient: CmhClient, defaultDownloadDi
       case Success(true) => printTrackerStats(torrentClient.statistics)
 
       case Success(false) => terminal().writer().println(s"Not implemented")
+    }
+  }
+
+  private def signal(input: CommandInput): Unit = {
+    val usage: Array[String] =
+      Array(
+        "signal -  for debugging. Signal demand for a torrent.",
+        "Usage: signal torrent-name",
+        "  -? --help                       Displays command help"
+      )
+    val opt: Options = parseOptions(usage, input.xargs())
+    collectionAsScalaIterable(opt.args()).toList match {
+      case torrent :: Nil => torrentClient.signal(torrent)
+      case Nil => terminal().writer().println("You can only signal 1 torrent at a time.")
     }
   }
 

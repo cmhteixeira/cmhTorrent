@@ -1,23 +1,25 @@
-package com.cmhteixeira.bittorrent.swarm
+package com.cmhteixeira.bittorrent.consumer
 
 import cats.implicits.toTraverseOps
-import com.cmhteixeira.bittorrent.swarm.WriterThread.{FinalizeSlice, Message, Read, Write}
+import com.cmhteixeira.bittorrent.Torrent
+import com.cmhteixeira.bittorrent.consumer.WriterThread.{FinalizeSlice, Message, Read, Write}
+import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
 
-import java.io.IOException
+import java.io.{IOException, InputStream}
 import java.nio.file.Path
 import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue}
 import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 
-private[swarm] class WriterThread private (
+private class WriterThread private (
     targetDir: Path,
     @volatile var files: Map[Path, TorrentFile],
     queue: BlockingQueue[Message],
     ec: ExecutionContext
-) extends TorrentFileManager {
+) extends Subscriber {
   private val logger = LoggerFactory.getLogger("BlockWriter")
 
   ec.execute(new Runnable { def run(): Unit = runForever() })
@@ -29,7 +31,7 @@ private[swarm] class WriterThread private (
         logger.error("Taking element from queue.", exception)
       // todo: What to do here?
       case Success(write: Write) =>
-        dealWithWrite(write)
+//        dealWithWrite(write)
         runForever()
 
       case Success(read: Read) =>
@@ -62,12 +64,11 @@ private[swarm] class WriterThread private (
   private def dealWithFinalize(msg: FinalizeSlice): Unit = {
     val FinalizeSlice(promise, slices, cond) = msg
     slices
-      .traverse {
-        case (path, off, len) =>
-          files.get(path) match {
-            case Some(tF) => Right((tF, off, len))
-            case None => Left((path, off, len))
-          }
+      .traverse { case (path, off, len) =>
+        files.get(path) match {
+          case Some(tF) => Right((tF, off, len))
+          case None => Left((path, off, len))
+        }
       } match {
       case Left((path, offset, len)) =>
         promise.tryFailure(
@@ -84,13 +85,13 @@ private[swarm] class WriterThread private (
           promise.tryFailure(
             new IllegalStateException(
               s"While trying to reading slices in order to verify hash, there were errors reading one or more: [${failure
-                .map {
-                  case ((tF, offset, len), TorrentFile.ReadError.Io(_)) =>
-                    s"Slice[file=${tF.path},offset=$offset,len:$len]:IO"
-                  case ((tF, offset, len), TorrentFile.ReadError.OutOfBounds(fileSize)) =>
-                    s"Slice[file=${tF.path},offset=$offset,len:$len]:OutOfBounds(fileSize=$fileSize)"
-                }
-                .mkString(", ")}]"
+                  .map {
+                    case ((tF, offset, len), TorrentFile.ReadError.Io(_)) =>
+                      s"Slice[file=${tF.path},offset=$offset,len:$len]:IO"
+                    case ((tF, offset, len), TorrentFile.ReadError.OutOfBounds(fileSize)) =>
+                      s"Slice[file=${tF.path},offset=$offset,len:$len]:OutOfBounds(fileSize=$fileSize)"
+                  }
+                  .mkString(", ")}]"
             )
           )
         else {
@@ -125,7 +126,7 @@ private[swarm] class WriterThread private (
   }
 
   private def dealWithWrite(msg: Write): Unit = {
-    val Write(channel, file, offset, block) = msg
+    val Write(channel, idx, offset, block) = msg
     files.get(file) match {
       case Some(pieceFile) =>
         channel.tryComplete(writeBlockToFile(pieceFile, offset, block))
@@ -159,50 +160,52 @@ private[swarm] class WriterThread private (
         success
     }
 
-  override def write(
-      file: Path,
-      offset: Long,
-      block: ByteVector
+  override def onNext(
+      idx: Int,
+      offset: Int,
+      data: ByteVector
   ): Future[Unit] = {
     val promise = Promise[Unit]()
-    queue.add(Write(promise, file, offset, block))
-    logger.info(s"Queued write. File: $file, offset: $offset, length: ${block.length}. Queue size: ${queue.size()}")
-    promise.future
+    Try(queue.offer(Write(promise, idx, offset, data))) match {
+      case Failure(exception) => Future.failed(new Exception(s"Adding to $idx at $offset, ${data.length}", exception))
+      case Success(added) if !added => Future.failed(new IllegalStateException("Tried, but failed."))
+      case Success(added) if added =>
+        logger.info(s"Queued. Index: $idx, offset: $offset, length: ${data.length}. Queue size: ${queue.size()}")
+        promise.future
+    }
+
   }
 
-  override def read(
-      file: Path,
-      offset: Long,
-      chunkSize: Int
-  ): Future[ByteVector] = {
-    val promise = Promise[ByteVector]()
-    queue.add(Read(promise, file, offset, chunkSize))
-    logger.info(s"Queued read. File: $file, offset: $offset, length: $chunkSize. Queue size: ${queue.size()}")
-    promise.future
+  override def read(blockRequest: BlockRequest): Future[ByteVector] = {
+    ???
+//    val promise = Promise[ByteVector]()
+//    queue.add(Read(promise, file, offset, chunkSize))
+//    logger.info(s"Queued read. File: $file, offset: $offset, length: $chunkSize. Queue size: ${queue.size()}")
+//    promise.future
   }
 
-  override def complete(slices: List[TorrentFileManager.FileSlice])(
-      cond: ByteVector => Boolean
-  ): Future[Boolean] = {
-    val promise = Promise[Boolean]()
-    queue.add(
-      FinalizeSlice(
-        promise,
-        slices.map { case TorrentFileManager.FileSlice(path, offset, len) => (path, offset.toLong, len.toLong) },
-        cond
-      )
-    )
-    logger.info(
-      s"Queued slice completes: [${slices.map(fS => s"${fS.path},offset:${fS.offset},len:${fS.size}").mkString(", ")}]. Queue size: ${queue.size()}"
-    )
-    promise.future
-  }
+//  override def complete(slices: List[TorrentFileManager.FileSlice])(
+//      cond: ByteVector => Boolean
+//  ): Future[Boolean] = {
+//    val promise = Promise[Boolean]()
+//    queue.add(
+//      FinalizeSlice(
+//        promise,
+//        slices.map { case TorrentFileManager.FileSlice(path, offset, len) => (path, offset.toLong, len.toLong) },
+//        cond
+//      )
+//    )
+//    logger.info(
+//      s"Queued slice completes: [${slices.map(fS => s"${fS.path},offset:${fS.offset},len:${fS.size}").mkString(", ")}]. Queue size: ${queue.size()}"
+//    )
+//    promise.future
+//  }
 }
 
 object WriterThread {
 
   private sealed trait Message
-  private case class Write(channel: Promise[Unit], file: Path, offset: Long, block: ByteVector) extends Message
+  private case class Write(channel: Promise[Unit], idx: Int, offset: Long, data: ByteVector) extends Message
 
   private case class Read(channel: Promise[ByteVector], file: Path, offset: Long, len: Long) extends Message
 
@@ -212,7 +215,7 @@ object WriterThread {
       cond: ByteVector => Boolean
   ) extends Message
 
-  //todo: This executionContext should be specific for long running tasks
+  // todo: This executionContext should be specific for long running tasks
   def apply(
       downloadDir: Path,
       executionContext: ExecutionContext

@@ -1,6 +1,7 @@
 package com.cmhteixeira.bittorrent.swarm
 
 import cats.data.NonEmptyList
+import com.cmhteixeira.bittorrent.consumer.{TorrentFile, TorrentFileImpl}
 import scodec.bits.ByteVector
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -57,8 +58,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that terminates but does not begin in it, cannot be written into it."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.WriteError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.WriteError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -73,8 +74,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that begins but does not terminate in it, cannot be written into it."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.WriteError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.WriteError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -89,8 +90,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that begins and ends in it, cannot be written into it."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.WriteError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.WriteError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -105,8 +106,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "The overlap of a write against all the affected slices should be listed whe it exists."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.WriteError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.WriteError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -152,8 +153,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that terminates but does not begin in it, cannot be finalized."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.FinalizeError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.FinalizeError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -168,8 +169,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that begins but does not terminate in it, cannot be finalized."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.FinalizeError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.FinalizeError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -184,8 +185,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "After a slice is finalized, another slice that begins and ends in it, cannot be finalized."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.FinalizeError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.FinalizeError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -200,8 +201,8 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   test(
     "The overlap of a finalize against all the affected slices should be listed whe it exists."
   ) {
-    import TorrentFile.Overlap
-    import TorrentFile.FinalizeError.AlreadyFinalized
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.Overlap
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.FinalizeError.AlreadyFinalized
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get
@@ -245,7 +246,7 @@ class TorrentFileImplSpec extends AnyFunSuite with Matchers {
   }
 
   test("Cannot finalize beyond file limits") {
-    import TorrentFile.FinalizeError.OutOfBounds
+    import com.cmhteixeira.bittorrent.consumer.TorrentFile.FinalizeError.OutOfBounds
 
     val filePath = randomTempFile()
     val torrentFile = TorrentFileImpl(filePath).get

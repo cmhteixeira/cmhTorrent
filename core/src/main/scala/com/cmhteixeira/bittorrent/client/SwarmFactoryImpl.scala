@@ -3,23 +3,21 @@ package com.cmhteixeira.bittorrent.client
 import com.cmhteixeira.bittorrent.swarm.{Swarm, SwarmImpl}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PeerFactory
-import com.cmhteixeira.bittorrent.{Torrent => SwarmTorrent}
+import com.cmhteixeira.bittorrent.Torrent
 
-import java.nio.file.Path
 import java.util.concurrent.ScheduledExecutorService
 import scala.concurrent.ExecutionContext
 class SwarmFactoryImpl private (
     scheduler: ScheduledExecutorService,
-    peerFactoryFactory: SwarmTorrent => PeerFactory,
+    peerFactoryFactory: Torrent => PeerFactory,
     mainExecutor: ExecutionContext,
     tracker: Tracker
 ) extends SwarmFactory {
 
-  override def newSwarm(torrent: SwarmTorrent, downloadDir: Path, blockSize: Int): Swarm =
+  override def newSwarm(torrent: Torrent, blockSize: Int): Swarm =
     SwarmImpl(
       torrent = torrent,
       blockSize = blockSize,
-      downloadDir = downloadDir,
       peerFactory = peerFactoryFactory(torrent),
       scheduler = scheduler,
       mainExecutor = mainExecutor,
@@ -32,7 +30,7 @@ object SwarmFactoryImpl {
   def apply(
       scheduler: ScheduledExecutorService,
       mainExecutor: ExecutionContext,
-      peerFactoryFactory: SwarmTorrent => PeerFactory,
+      peerFactoryFactory: Torrent => PeerFactory,
       tracker: Tracker
   ): SwarmFactoryImpl = new SwarmFactoryImpl(scheduler, peerFactoryFactory, mainExecutor, tracker)
 }

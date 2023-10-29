@@ -20,7 +20,7 @@ import com.cmhteixeira.bencode.Error.DecodingFailure.{
   DifferentTypeExpected,
   GenericDecodingFailure
 }
-import com.cmhteixeira.bencode.{Bencode, Decoder, Encoder}
+import com.cmhteixeira.bencode.{Bencode, Decoder, Encoder, parse}
 import org.apache.commons.codec.binary.Hex
 
 import java.nio.file.{Path, Paths}
@@ -58,6 +58,11 @@ case class Torrent(
       case mF: Torrent.MultiFile => mF.fileChunks(pieceIndex, offset, block)
     }
 
+  def fileSlices(pieceIndex: Int, offset: Long, length: Int): Option[NonEmptyList[Torrent.FileSlice]] =
+    info match {
+      case sF: Torrent.SingleFile => sF.fileSlices(pieceIndex, offset, length).map(NonEmptyList.one)
+      case mF: Torrent.MultiFile => mF.fileSlices(pieceIndex, offset, length)
+    }
   def fileSlices(pieceIndex: Int): Option[NonEmptyList[Torrent.FileSlice]] =
     info match {
       case sF: Torrent.SingleFile => sF.fileSlice(pieceIndex).map(NonEmptyList.one)
@@ -342,9 +347,11 @@ object Torrent {
     def pieceSize(index: Int): Int
     def pieces: NonEmptyList[PieceHash]
     def torrentName: String
+    def files: NonEmptyList[File]
   }
 
   case class SingleFile(length: Long, path: Path, pieceLength: Long, pieces: NonEmptyList[PieceHash]) extends Info {
+    override def files: NonEmptyList[File] = NonEmptyList.one(File(length, path))
 
     override def pieceSize(index: Int): Int = {
       val numberPieces = pieces.size
@@ -355,6 +362,12 @@ object Torrent {
     def fileChunk(pieceIndex: Int, offset: Int, block: ByteVector): Option[FileChunk] =
       if (pieceLength * pieceIndex + offset + block.length <= length) Some(FileChunk(path, offset, block))
       else None
+
+    def fileSlices(pieceIndex: Int, offset: Long, length: Int): Option[FileSlice] =
+      fileSlice(pieceIndex).flatMap {
+        case FileSlice(_, _, size) if size < length => None
+        case FileSlice(path, fileOffset, _) => Some(FileSlice(path, fileOffset + offset, length))
+      }
 
     def fileSlice(pieceIndex: Int): Option[FileSlice] = {
       val startOfPiece = pieceLength * pieceIndex
@@ -376,6 +389,9 @@ object Torrent {
 
   case class MultiFile(files: NonEmptyList[File], name: Path, pieceLength: Long, pieces: NonEmptyList[PieceHash])
       extends Info {
+
+    def fileSlices(pieceIndex: Int, offset: Long, length: Int): Option[NonEmptyList[FileSlice]] =
+      fileSlices(pieceIndex * pieceLength + offset, length)
 
     def fileSlices(index: Int): Option[NonEmptyList[FileSlice]] =
       fileSlices(index * pieceLength, pieceSize(index))

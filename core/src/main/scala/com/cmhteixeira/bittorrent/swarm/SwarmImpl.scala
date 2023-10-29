@@ -1,20 +1,16 @@
 package com.cmhteixeira.bittorrent.swarm
 
-import cats.implicits.{catsStdInstancesForFuture, toTraverseOps}
 import com.cmhteixeira.bittorrent.Torrent
+import com.cmhteixeira.bittorrent.consumer.{Subscriber, Subscription}
 import com.cmhteixeira.bittorrent.peerprotocol.Peer
 import com.cmhteixeira.bittorrent.peerprotocol.Peer.BlockRequest
 import com.cmhteixeira.bittorrent.swarm.SwarmImpl.PieceState.{BlockState, Downloaded}
-import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{PeerFactory, maxBlocksAtOnce}
-import com.cmhteixeira.bittorrent.Torrent.{FileChunk, PieceHash}
-import com.cmhteixeira.bittorrent.consumer.Funil
+import com.cmhteixeira.bittorrent.swarm.SwarmImpl.{Active, PeerFactory, PieceState, maxBlocksAtOnce}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 import org.slf4j.LoggerFactory
-import scodec.bits.ByteVector
+import scodec.bits.BitVector
 
 import java.net.InetSocketAddress
-import java.nio.file.Path
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 import scala.annotation.tailrec
@@ -23,23 +19,18 @@ import scala.concurrent.{ExecutionContext, Future, Promise, TimeoutException}
 import scala.language.postfixOps
 import scala.util.{Failure, Success, Try}
 
-private class SwarmImpl private (
+final private class SwarmImpl private (
     state: AtomicReference[SwarmImpl.State],
     torrent: Torrent,
     tracker: Tracker,
     scheduler: ScheduledExecutorService,
     config: SwarmImpl.Configuration,
-    fileManager: TorrentFileManager,
     mainExecutor: ExecutionContext,
     peerFactory: PeerFactory
 ) extends Swarm
-    with Tracker.Subscriber {
+    with Tracker.Subscriber
+    with Subscription {
   private val logger = LoggerFactory.getLogger(s"Swarm.${torrent.infoHash.hex.take(6)}")
-  tracker
-    .submit(torrent)
-    .subscribe(this)
-
-  run()
 
   private def removePeer(peer: Peer): Unit = {
     val currentState = state.get()
@@ -91,7 +82,8 @@ private class SwarmImpl private (
   override def onSubscribe(s: Tracker.Subscription): Unit = {
     val currentState = state.get()
     currentState match {
-      case active @ SwarmImpl.Active(_, _, _, _, None) =>
+      case SwarmImpl.Unsubscribed => logger.error("TODO: State should be impossible.")
+      case active @ SwarmImpl.Active(_, _, _, _, _, _, _, None) =>
         if (!state.compareAndSet(currentState, active.copy(trackerSubscription = Some(s)))) this.onSubscribe(s)
       case _ => ()
     }
@@ -101,8 +93,9 @@ private class SwarmImpl private (
   override def onNext(t: InetSocketAddress): Unit = {
     val currentState = state.get()
     currentState match {
+      case SwarmImpl.Unsubscribed => logger.error("TODO: State should be impossible.")
       case SwarmImpl.Closed => logger.warn("Trying to add, but swarm is closed.")
-      case active @ SwarmImpl.Active(unconnectedPeers, peersToState, _, _, _) =>
+      case active @ SwarmImpl.Active(_, _, _, unconnectedPeers, peersToState, _, _, _) =>
         implicit val ec = mainExecutor
         if (unconnectedPeers.contains(t) || peersToState.exists { case (peer, _) => peer.address == t }) ()
         else {
@@ -120,12 +113,14 @@ private class SwarmImpl private (
         }
     }
   }
+
   override def onError(t: Throwable): Unit = logger.error("Tracker stopped subscription.", t)
-  override def close(): Unit = {
+
+  private def close(): Unit = {
     logger.info("Shutting down.")
     state.get() match {
       case SwarmImpl.Closed => logger.warn("Closing, but already closed. Doing nothing.")
-      case SwarmImpl.Active(_, peersToState, _, _, trackerSubscription) =>
+      case SwarmImpl.Active(_, _, _, _, peersToState, _, _, trackerSubscription) =>
         state.set(SwarmImpl.Closed)
         peersToState.keys.foreach(_.close())
         trackerSubscription match {
@@ -135,68 +130,12 @@ private class SwarmImpl private (
     }
   }
 
-  private def chooseBlock(): Either[String, (BlockRequest, Peer)] = {
-    val currentState = state.get()
-    currentState match {
-      case SwarmImpl.Closed => Left("Swarm already closed.")
-      case active: SwarmImpl.Active =>
-        chooseBlockToDownload(active).left.map(g => s"Could not choose block: $g").flatMap { case (blockR, peer) =>
-          active.markBlockForDownload(blockR) match {
-            case Left(_) => Left("Correct later....")
-            case Right(newState) =>
-              if (!state.compareAndSet(currentState, newState)) chooseBlock()
-              else Right((blockR, peer))
-          }
-        }
-    }
-
-  }
-
-  private def run(): Future[Unit] = {
-    implicit val ec: ExecutionContext = mainExecutor
-    (chooseBlock() match {
-      case Left(value) =>
-        logger.info(s"Could not choose block. Delaying by 100 millis.: $value")
-        Future.unit
-      case Right(a @ (blockR, peer)) =>
-        logger.info(s"Choose block '$blockR for download.")
-        (for {
-          byteVector <- timeout(peer.download(blockR))
-          fileChunks <- torrent.fileChunks(blockR.index, blockR.offSet, byteVector) match {
-            case Some(fileChunks) => Future.successful(fileChunks)
-            case None => Future.failed(new Exception("kabooom!"))
-          }
-          _ <- fileChunks.traverse { case FileChunk(path, offset, block) => fileManager.write(path, offset, block) }
-          newState4Piece <- setStateToCompleted(blockR)
-          pieceDownloaded <-
-            if (newState4Piece.allBlocksDownloaded) hashCheck(blockR, torrent.info.pieces.toList(blockR.index))
-            else Future.successful(false)
-          _ = if (pieceDownloaded) notifyHave(blockR.index)
-        } yield a)
-          .map { case (bR, p) => logger.info(s"Downloaded $bR from $p") }
-          .recoverWith { case e: Exception =>
-            logger.info(s"Failed download $blockR from $peer", e)
-            markAsFailed(blockR)
-            Future.unit
-          }
-
-    }).flatMap(_ => delay(Success(), 100 millis)).flatMap(_ => run())
-  }
-
   def notifyHave(piece: Int): Unit =
     state.get() match {
+      case SwarmImpl.Unsubscribed => logger.error("TODO: State should be impossible.")
       case SwarmImpl.Closed => logger.info("TODO")
-      case SwarmImpl.Active(_, peersToState, _, _, _) =>
+      case SwarmImpl.Active(_, _, _, _, peersToState, _, _, _) =>
         peersToState.foreach { case (peer, _) => peer.piece(piece) }
-    }
-
-  private def hashCheck(blockR: BlockRequest, hash: PieceHash): Future[Boolean] =
-    fileManager.complete(torrent.fileSlices(blockR.index).fold[List[Torrent.FileSlice]](List())(_.toList).map {
-      case Torrent.FileSlice(path, offset, len) => TorrentFileManager.FileSlice(path, offset, len)
-    }) { content =>
-      ByteVector(MessageDigest.getInstance("SHA-1").digest(content.toArray)) == ByteVector(
-        hash.bytes
-      )
     }
 
   private def chooseBlockToDownload(
@@ -284,10 +223,12 @@ private class SwarmImpl private (
         logger.warn("Tracker could not find statistics for this torrent. Very bad.")
         Tracker.Statistics(Tracker.Summary(0, 0, 0, 0, 0), Map.empty)
     }
+
   override def getPieces: List[Swarm.PieceState] =
     state.get() match {
+      case SwarmImpl.Unsubscribed => List.empty
       case SwarmImpl.Closed => List.empty
-      case SwarmImpl.Active(_, _, _, piecesToState, _) =>
+      case SwarmImpl.Active(_, _, _, _, _, _, piecesToState, _) =>
         piecesToState.toList.sortBy { case (i, _) => i }.map {
           case (_, SwarmImpl.PieceState.Downloading(blocks)) =>
             Swarm.PieceState.Downloading(
@@ -304,22 +245,146 @@ private class SwarmImpl private (
 
   override def getPeers: List[Swarm.PeerState] = {
     state.get() match {
+      case SwarmImpl.Unsubscribed => List.empty
       case SwarmImpl.Closed => List.empty
-      case SwarmImpl.Active(unconnectedPeers, peersToState, _, _, _) =>
+      case SwarmImpl.Active(_, _, _, unconnectedPeers, peersToState, _, _, _) =>
         peersToState.values.toList.map { case SwarmImpl.PeerState(isChoked, _, _, numPieces) =>
           Swarm.PeerState.Connected(isChoked, numPieces.size)
         } ::: (1 to unconnectedPeers.size).toList.map(_ => Swarm.PeerState.Unconnected)
     }
   }
-  override def subscribe(s: Funil): Future[Unit] = ???
+
+  override def subscribe(s: Subscriber): Future[Unit] = {
+    val currentState = state.get()
+    currentState match {
+      case SwarmImpl.Unsubscribed =>
+        val newState = Active.from(
+          s,
+          torrent.info.pieces.zipWithIndex
+            .map { case (_, index) =>
+              index -> torrent
+                .splitInBlocks(index, config.blockSize)
+                .map { case (off, len) => BlockRequest(index, off, len) }
+                .toSet
+            }
+            .toList
+            .toMap
+        )
+        if (!state.compareAndSet(currentState, newState)) subscribe(s)
+        else {
+          Future {
+            s.onSubscribe(this)
+          }(mainExecutor)
+        }
+      case SwarmImpl.Closed => Future.failed(new IllegalArgumentException("Swarm already closed."))
+      case _: SwarmImpl.Active => Future.failed(new IllegalArgumentException("Swarm already subscribed."))
+    }
+  }
+
+  private def chooseBlock(): Either[String, (BlockRequest, Peer)] = {
+    val currentState = state.get()
+    currentState match {
+      case SwarmImpl.Closed => Left("Swarm already closed.")
+      case active: SwarmImpl.Active =>
+        chooseBlockToDownload(active).left.map(g => s"Could not choose block: $g").flatMap { case (blockR, peer) =>
+          active.markBlockForDownload(blockR) match {
+            case Left(_) => Left("Correct later....")
+            case Right(newState) =>
+              if (!state.compareAndSet(currentState, newState)) chooseBlock()
+              else Right((blockR, peer))
+          }
+        }
+    }
+  }
+
+  private def run(s: Subscriber): Future[Unit] = {
+    implicit val ec: ExecutionContext = mainExecutor
+    (chooseBlock() match {
+      case Left(value) =>
+        logger.info(s"Could not choose block. Delaying by 100 millis.: $value")
+        Future.unit
+      case Right(a @ (blockR, peer)) =>
+        logger.info(s"Choose block '$blockR for download.")
+        (for {
+          byteVector <- timeout(peer.download(blockR))
+          _ <- s.onNext(blockR.index, blockR.offSet, byteVector)
+          _ <- setStateToCompleted(blockR)
+        } yield a)
+          .map { case (bR, p) => logger.info(s"Downloaded $bR from $p") }
+          .recoverWith { case e: Exception =>
+            logger.info(s"Failed download $blockR from $peer", e)
+            markAsFailed(blockR)
+            Future.unit
+          }
+
+    }).flatMap(_ => delay(Success(), 100 millis)).flatMap(_ => run(s))
+  }
+
+  override def cancel(): Unit = {
+    logger.info("Cancelling by subscriber.")
+    close()
+  }
+
+  override def request(i: Int): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case active @ Active(s, currentlyDownloading, demand, _, _, _, _, _) =>
+        val passes = maxBlocksAtOnce - currentlyDownloading
+        if (passes <= 0) {
+          if (!state.compareAndSet(currentState, active.demand(i))) request(i)
+          else logger.info(s"Added demand by $i. Did not start anything.")
+        } else {
+          val newState =
+            if (passes == 1) active.copy(currentlyDownloading = currentlyDownloading + 1)
+            else active.copy(currentlyDownloading = currentlyDownloading + 1, demand = demand + (passes - 1))
+          if (!state.compareAndSet(currentState, newState)) request(i)
+          else {
+            logger.info("Starting a run.")
+            run(s)
+          }
+        }
+
+      case other => logger.warn("TODO-request")
+    }
+  }
+
+  override def completed(pieceIdx: Int): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case active @ Active(_, _, _, _, _, _, piecesToState, _) =>
+        piecesToState.get(pieceIdx) match {
+          case Some(pieceState) if pieceState.allBlocksDownloaded =>
+            if (!state.compareAndSet(currentState, active.updateState(pieceIdx, PieceState.Downloaded)))
+              completed(pieceIdx)
+            else {
+              logger.info(s"Received complete signal for piece $pieceIdx from downstream")
+              active.peersToState.keys.foreach(_.piece(pieceIdx))
+            }
+          case Some(pieceState) =>
+            logger.info(s"Received complete signal for piece $pieceIdx from downstream, but $pieceState. ")
+          case None => logger.error(s"Unknown piece $pieceIdx.", new IllegalStateException("Unknown piece $pieceIdx."))
+        }
+      case other => logger.warn(s"Received complete signal for piece $pieceIdx from downstream, but state is $other.")
+    }
+  }
+
+  override def wrongHash(pieceIdx: Int): Unit = {
+    val currentState = state.get()
+    currentState match {
+      case SwarmImpl.Unsubscribed => logger.warn("TODO.")
+      case SwarmImpl.Closed => logger.warn("TODO.")
+      case Active(_, _, _, _, _, _, piecesToState, _) =>
+        logger.error(s"TODO: RECEIVED WRONG HASH FOR PIECE $pieceIdx")
+    }
+  }
 }
 
 object SwarmImpl {
 
   type PeerFactory = InetSocketAddress => Peer
 
-  private val maxBlocksAtOnce = 5
-  case class Configuration(downloadDir: Path, blockSize: Int)
+  private val maxBlocksAtOnce = 2
+  private case class Configuration(blockSize: Int)
 
   private[swarm] case class PeerState(chocked: Boolean, uploaded: Long, downloaded: Long, pieces: Set[Int])
 
@@ -329,9 +394,14 @@ object SwarmImpl {
 
   sealed trait State
 
+  case object Unsubscribed extends State
+
   case object Closed extends State
 
   case class Active(
+      subscriber: Subscriber,
+      currentlyDownloading: Int,
+      demand: Int,
       unconnectedPeers: Set[InetSocketAddress],
       peersToState: Map[Peer, SwarmImpl.PeerState],
       piecesToPeers: Map[Int, Set[Peer]],
@@ -377,15 +447,7 @@ object SwarmImpl {
     def updateState(pieceIndex: Int, newState: PieceState): Active =
       copy(piecesToState = piecesToState.updated(pieceIndex, newState))
 
-    def numBlocksDownloading: Int =
-      piecesToState.foldLeft(0) {
-        case (acc, (_, SwarmImpl.PieceState.Downloading(blocks))) =>
-          acc + blocks.count {
-            case (_, BlockState.Asked) => true
-            case _ => false
-          }
-        case (acc, _) => acc
-      }
+    def demand(i: Int): Active = copy(demand = demand + i)
 
     def markBlockForDownload(blockRequest: BlockRequest) =
       piecesToState.get(blockRequest.index) match {
@@ -464,8 +526,11 @@ object SwarmImpl {
     sealed trait Error
     case class OmgError(msg: String) extends Error
 
-    def from(piecesToBlocks: Map[Int, Set[BlockRequest]]): State = {
+    def from(subscriber: Subscriber, piecesToBlocks: Map[Int, Set[BlockRequest]]): Active =
       Active(
+        subscriber = subscriber,
+        currentlyDownloading = 0,
+        demand = 0,
         unconnectedPeers = Set.empty,
         peersToState = Map.empty,
         piecesToPeers = piecesToBlocks.map { case (index, _) => index -> Set.empty },
@@ -474,7 +539,6 @@ object SwarmImpl {
         },
         trackerSubscription = None
       )
-    }
   }
 
   sealed trait PieceState extends Product with Serializable {
@@ -486,7 +550,6 @@ object SwarmImpl {
           case _ => false
         }
       case PieceState.Downloaded => true
-
     }
   }
 
@@ -513,31 +576,15 @@ object SwarmImpl {
       mainExecutor: ExecutionContext,
       scheduler: ScheduledExecutorService,
       peerFactory: PeerFactory,
-      downloadDir: Path,
       blockSize: Int,
       torrent: Torrent
   ): Swarm = {
-    val writerThread = WriterThread(downloadDir, mainExecutor)
-
     new SwarmImpl(
-      state = new AtomicReference(
-        Active.from(
-          torrent.info.pieces.zipWithIndex
-            .map { case (_, index) =>
-              index -> torrent
-                .splitInBlocks(index, blockSize)
-                .map { case (off, len) => BlockRequest(index, off, len) }
-                .toSet
-            }
-            .toList
-            .toMap
-        )
-      ),
+      state = new AtomicReference(SwarmImpl.Unsubscribed),
       torrent = torrent,
       tracker = tracker,
       scheduler = scheduler,
-      config = Configuration(downloadDir, blockSize),
-      fileManager = writerThread.get,
+      config = Configuration(blockSize),
       mainExecutor = mainExecutor,
       peerFactory
     )

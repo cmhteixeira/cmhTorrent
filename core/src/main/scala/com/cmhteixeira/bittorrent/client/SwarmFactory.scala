@@ -1,10 +1,8 @@
 package com.cmhteixeira.bittorrent.client
 
 import com.cmhteixeira.bittorrent.swarm.Swarm
-import com.cmhteixeira.bittorrent.{Torrent => SwarmTorrent}
-
-import java.nio.file.Path
+import com.cmhteixeira.bittorrent.Torrent
 
 trait SwarmFactory {
-  def newSwarm(torrent: SwarmTorrent, downloadDir: Path, blockSize: Int): Swarm
+  def newSwarm(torrent: Torrent, blockSize: Int): Swarm
 }

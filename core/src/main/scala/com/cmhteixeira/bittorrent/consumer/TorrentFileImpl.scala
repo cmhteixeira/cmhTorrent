@@ -1,13 +1,14 @@
-package com.cmhteixeira.bittorrent.swarm
+package com.cmhteixeira.bittorrent.consumer
 
 import cats.data.NonEmptyList
-import com.cmhteixeira.bittorrent.swarm.TorrentFileImpl.Slices
+import com.cmhteixeira.bittorrent.consumer.TorrentFileImpl.Slices
+import org.slf4j.LoggerFactory
 import scodec.bits.ByteVector
+
 import java.io.RandomAccessFile
 import java.nio.file.{Files, Path}
-import scala.util.{Failure, Success, Try}
 import scala.annotation.tailrec
-import org.slf4j.LoggerFactory
+import scala.util.{Failure, Success, Try}
 
 /**
   * NOT THREAD_SAFE.

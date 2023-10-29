@@ -4,13 +4,14 @@ import com.cmhteixeira.bittorrent.{InfoHash, Torrent}
 import com.cmhteixeira.bittorrent.tracker.Tracker
 
 import java.nio.file.Path
-import scala.concurrent.Future
 
 trait CmhClient extends AutoCloseable {
-  def downloadTorrent(t: Torrent, p: Path): Future[Path]
-  def downloadTorrent(t: Path, p: Path): Either[CmhClient.SubmissionError, Future[Path]]
+  def downloadTorrent(t: Torrent, p: Path, s: CmhClient.Subscriber): Either[CmhClient.SubmissionError, Unit]
+  def downloadTorrent(t: Path, p: Path, s: CmhClient.Subscriber): Either[CmhClient.SubmissionError, Unit]
   def info(p: Path): Either[String, Torrent]
   def statistics: Map[CmhClient.Torrent, Tracker.Statistics]
+
+  def signal(torrent: String): Unit
 
   def listTorrents: Map[CmhClient.Torrent, CmhClient.TorrentDetails]
 
@@ -22,13 +23,19 @@ trait CmhClient extends AutoCloseable {
 }
 
 object CmhClient {
-  case class Torrent(infoHash: InfoHash, name: String) {
+  trait Subscriber {
+    def onNext(): Unit
+    def onComplete(): Unit
+    def onError(e: Exception): Unit
+  }
 
+  case class Torrent(infoHash: InfoHash, name: String) {
     override def equals(obj: Any): Boolean =
-      obj match {
-        case Torrent(thatInfoHash, _) => thatInfoHash == infoHash
+      Option(obj) match {
+        case Some(Torrent(thatInfoHash, _)) => thatInfoHash == infoHash
         case _ => false
       }
+    override def hashCode(): Int = infoHash.hashCode()
   }
 
   case class TorrentDetails(
@@ -43,4 +50,6 @@ object CmhClient {
   sealed trait SubmissionError
   case object FileDoesNotExist extends SubmissionError
   case class ParsingError(someError: String) extends SubmissionError
+
+  case class Other(msg: String, exception: Throwable) extends SubmissionError
 }

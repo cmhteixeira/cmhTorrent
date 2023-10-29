@@ -1,4 +1,4 @@
-package com.cmhteixeira.bittorrent.swarm
+package com.cmhteixeira.bittorrent.consumer
 
 import cats.data.NonEmptyList
 import scodec.bits.ByteVector
@@ -12,6 +12,8 @@ trait TorrentFile {
   def read(pos: Long, len: Int): Either[TorrentFile.ReadError, ByteVector]
   def finalizeSlice(pos: Long, length: Long): Either[TorrentFile.FinalizeError, Unit]
   def path: Path
+
+  override final def toString: String = path.toString
 }
 
 object TorrentFile {
