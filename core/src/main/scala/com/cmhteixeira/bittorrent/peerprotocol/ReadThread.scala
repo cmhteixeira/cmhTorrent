@@ -72,7 +72,13 @@ private[peerprotocol] class ReadThread private (
     else if (msgType == 6) request(msgSize)
     else if (msgType == 7) piece(msgSize)
     else if (msgType == 8) cancel(msgSize)
+    else if (msgType == 9) dht(msgSize)
     else Message.MessageTypeUnknown(msgType)
+  }
+
+  private def dht(msgSize: Int): Message = {
+    logger.warn(s"Received dht message with size $msgSize bytes.")
+    Message.Dht
   }
 
   private def cancel(msgSize: Int): Message = {

@@ -187,6 +187,7 @@ final class PeerImpl private (
     case i @ Message.Cancel(_, _, _) => logger.info(s"Received '$i'. Ignoring for now.")
     case Message.MessageTypeUnknown(msgType) =>
       internalShutdown(new RuntimeException(s"Received message of unknown type: $msgType"))
+    case Message.Dht => logger.warn("Receiving DHT message. Not supported. Ignoring.")
     case Message.KeepAlive => logger.info("Received keep-alive.")
   }
 
@@ -314,7 +315,7 @@ object PeerImpl {
     case class Piece(idx: Int, offset: Int, data: ByteVector) extends Message
     case class Cancel(idx: Int, offset: Int, len: Int) extends Message
     case class MessageTypeUnknown(msgType: Int) extends Message
-
+    case object Dht extends Message
     case object KeepAlive extends Message
   }
 
